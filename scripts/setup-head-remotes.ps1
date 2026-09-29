@@ -23,9 +23,9 @@ Pop-Location
 git fetch head-client-portal export-client-portal
 git fetch head-mobile-sync export-mobile-sync
 
-# Remove the placeholder README.md files before the subtree add, or they'll sit alongside the
-# real content instead of being replaced by it.
-Remove-Item client-portal\README.md, mobile-sync\README.md -ErrorAction SilentlyContinue
+# Remove the placeholder directories entirely (not just the README.md inside them) -- git subtree
+# add refuses to target a prefix that already exists on disk, even an empty one.
+Remove-Item -Recurse -Force client-portal, mobile-sync -ErrorAction SilentlyContinue
 git add -A
 git commit -m "Remove placeholder READMEs before first Head sync" --allow-empty
 
