@@ -11,6 +11,14 @@ $ErrorActionPreference = 'Stop'
 git remote add head-client-portal "D:\Sole\Business Suite\development\businesssuite"
 git remote add head-mobile-sync "D:\Sole\Business Suite\development\businesssuite-mobile"
 
+# Restrict each remote's fetch refspec to ONLY the filtered export branch -- without this, git's
+# default refspec pulls every branch (including main), so a plain 'Fetch' in SourceTree (or
+# 'git fetch <remote>' with no branch arg) silently drags in Head's entire history alongside the
+# filtered one. That history would sit in the local repo (never pushed, since main's own ancestry
+# stays untouched) but is a landmine for an accidental future push of the wrong branch.
+git remote set-branches head-client-portal export-client-portal
+git remote set-branches head-mobile-sync export-mobile-sync
+
 # First split, same as sync-from-head.ps1 does on every subsequent run.
 Push-Location "D:\Sole\Business Suite\development\businesssuite"
 git subtree split --prefix=cloudflare-client-portal -b export-client-portal
