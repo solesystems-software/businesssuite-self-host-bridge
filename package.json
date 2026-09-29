@@ -1,0 +1,17 @@
+{
+  "name": "businesssuite-cloudflare-client-portal",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "schema:remote": "wrangler d1 execute businesssuite-client-portal-dev --remote --file=./schema.sql",
+    "test:local": "node test/run-local-e2e.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260702.1",
+    "typescript": "5.2.2",
+    "wrangler": "4.107.0"
+  }
+}
