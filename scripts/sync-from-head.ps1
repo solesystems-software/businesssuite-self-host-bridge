@@ -1,8 +1,10 @@
 <#
 .SYNOPSIS
   Syncs client-portal/ and mobile-sync/ from the Head repos into this repo via git subtree,
-  preserving file history. Run this after merging iteration work into Head, instead of copying
-  files by hand.
+  preserving file history, and pushes the result. Run this after merging iteration work into
+  Head -- intended to be wired up as a SourceTree Custom Action (Repository menu > Custom
+  Actions... in this repo, or Tools > Options > Custom Actions for all repos): Script to run
+  `powershell.exe`, Parameters `-ExecutionPolicy Bypass -File "$REPO_DIR$\scripts\sync-from-head.ps1"`.
 
 .NOTES
   One-time setup required first (see setup-head-remotes.ps1 in this same folder) -- this script
@@ -47,4 +49,12 @@ Sync-Subtree -HeadRepoPath "D:\Sole\Business Suite\development\businesssuite-mob
   -SubdirInHead "cloudflare-mobile-sync" -RemoteName "head-mobile-sync" `
   -ExportBranch "export-mobile-sync" -Prefix "mobile-sync"
 
-Write-Host "--- Done. Review the two new commits, then: git push ---"
+$ahead = git rev-list --count '@{u}..HEAD' 2>$null
+if ($LASTEXITCODE -eq 0 -and [int]$ahead -gt 0) {
+  Write-Host "--- Pushing $ahead commit(s) ---"
+  git push
+} else {
+  Write-Host "--- Nothing new to push (client-portal and mobile-sync already up to date) ---"
+}
+
+Write-Host "--- Done. ---"
