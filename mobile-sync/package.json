@@ -1,0 +1,25 @@
+{
+  "name": "businesssuite-mobile-sync-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "test:local": "node tests/run-local-e2e.mjs",
+    "test:deployed": "node tests/deployed-e2e.mjs",
+    "accept:deployed": "node tests/run-deployed-acceptance.mjs",
+    "channel:smoke": "node tests/channel-smoke.mjs",
+    "pairing:qr": "node tests/generate-pairing-qr.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260702.1",
+    "@types/ws": "^8.18.1",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "typescript": "5.2.2",
+    "wrangler": "4.107.0",
+    "ws": "^8.21.3"
+  }
+}
