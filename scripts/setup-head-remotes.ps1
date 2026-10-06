@@ -44,6 +44,7 @@ git add -A
 git commit -m "Remove placeholder READMEs before first Head sync" --allow-empty
 
 foreach ($target in $targets) {
+  Assert-CleanWorkingTree
   git subtree add --prefix=$($target.Prefix) $target.RemoteName $target.ExportBranch --squash
 }
 

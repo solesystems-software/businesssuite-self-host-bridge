@@ -25,6 +25,7 @@ foreach ($target in $newTargets) {
 # No placeholder files to remove here (bank-feed/ and payments/ don't exist yet in this repo at
 # all) -- unlike the original setup, which had to clear out README.md placeholders first.
 foreach ($target in $newTargets) {
+  Assert-CleanWorkingTree
   git subtree add --prefix=$($target.Prefix) $target.RemoteName $target.ExportBranch --squash
 }
 

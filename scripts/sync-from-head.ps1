@@ -18,6 +18,7 @@ $ErrorActionPreference = 'Stop'
 
 foreach ($target in Get-SyncTargets) {
   Sync-TargetSplit -Target $target
+  Assert-CleanWorkingTree
   git subtree pull --prefix=$($target.Prefix) $target.RemoteName $target.ExportBranch --squash -m "Sync $($target.Prefix) from Head"
 }
 

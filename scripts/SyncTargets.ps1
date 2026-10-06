@@ -34,3 +34,21 @@ function Sync-TargetSplit {
   Pop-Location
   git fetch $Target.RemoteName $Target.ExportBranch
 }
+
+# git subtree add/pull both require a genuinely clean working tree and refuse to run otherwise
+# ("fatal: working tree has modifications. Cannot add."). On Windows, right after a fetch, the
+# index can transiently disagree with the checked-out files purely from CRLF line-ending
+# normalization (core.autocrlf) before anything has actually touched them -- 'git status' alone
+# doesn't always catch this, but subtree's own clean-check does, and fails the whole operation.
+# 'update-index --refresh' re-stats the index against the working tree and clears that false
+# positive; if the tree is still dirty after that, it's a real uncommitted change and this reports
+# it plainly instead of letting subtree's own less-informative error through.
+function Assert-CleanWorkingTree {
+  git update-index -q --refresh | Out-Null
+  $dirty = git status --porcelain
+  if ($dirty) {
+    Write-Host "--- Working tree is not clean, cannot run git subtree: ---"
+    Write-Host $dirty
+    throw "Working tree has real uncommitted changes -- commit or discard them, then re-run this script."
+  }
+}
