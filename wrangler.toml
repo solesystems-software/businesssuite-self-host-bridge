@@ -1,0 +1,41 @@
+name = "businesssuite-bank-feeds-dev"
+main = "src/bankFeedWorkerEntry.ts"
+compatibility_date = "2026-07-14"
+workers_dev = true
+preview_urls = false
+
+[vars]
+SERVICE_ENVIRONMENT = "development"
+PLAID_ENVIRONMENT = "sandbox"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "businesssuite-bank-feeds-dev"
+database_id = "43496c9a-0031-4e7b-9a47-a479c2306b30"
+
+# Development Worker in the self-host-bridge-dev account (moved there 2026-09-29 -- the earlier dev
+# Worker and D1 database lived in a different, older account). Bank Connections is independent of
+# licensing (Galen, 2026-09-30): this Worker authenticates the desktop with its own self-bootstrapped
+# signing secret (bank_feed_worker_settings) and has no licensing URL, binding or secret. Secrets (never
+# stored here): STRIPE_API_KEY_ENCRYPTION_KEY only.
+
+# Production naming, matching cloudflare/ (licensing) and cloudflare-client-portal/: the top-level block
+# above is the dev Worker (`businesssuite-bank-feeds-dev`); `wrangler deploy --env production` deploys
+# `businesssuite-bank-feeds`. Bank Connections is Stripe Financial Connections (Plaid is retired for new
+# connections), so the Plaid environment below is only relevant to an existing Plaid connection.
+# The production D1 database must be created first (`npx wrangler d1 create businesssuite-bank-feeds`)
+# and its id filled in below; then apply schema/migrations with `--env production`, set the secrets
+# (only STRIPE_API_KEY_ENCRYPTION_KEY; the request-signing secret is self-bootstrapped), and deploy.
+# Never deploy this environment without Galen's explicit go-ahead.
+[env.production]
+name = "businesssuite-bank-feeds"
+
+[env.production.vars]
+SERVICE_ENVIRONMENT = "production"
+PLAID_ENVIRONMENT = "production"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "businesssuite-bank-feeds"
+# REPLACE with the id printed by `npx wrangler d1 create businesssuite-bank-feeds`.
+database_id = "REPLACE_WITH_PRODUCTION_D1_DATABASE_ID"
