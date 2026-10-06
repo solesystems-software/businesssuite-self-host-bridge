@@ -1,0 +1,37 @@
+# Payments Worker: an independent service (Galen, 2026-09-29) -- invoice card payments and hosted payment
+# links work whether or not an invoice is ever sent through Client Portal, so Payments does not live
+# inside the Client Portal Worker. It authenticates every Business request with its own self-bootstrapped
+# signing secret (see paymentsRequestAuthentication.ts) and stores each Business's own Stripe API key
+# encrypted with STRIPE_API_KEY_ENCRYPTION_KEY. Same naming convention as the other Workers: this
+# top-level block is the dev Worker `businesssuite-payments-dev`; `--env production` deploys
+# `businesssuite-payments`.
+name = "businesssuite-payments-dev"
+main = "src/paymentsWorkerEntry.ts"
+compatibility_date = "2026-08-22"
+workers_dev = true
+preview_urls = false
+
+[vars]
+SERVICE_ENVIRONMENT = "development"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "businesssuite-payments-dev"
+# Created in the self-host-bridge-dev account (2026-09-29).
+database_id = "da963dad-6aea-4ce9-98e5-0a0fcaef2fc8"
+
+# Secret (set with `wrangler secret put`, never stored in this file):
+#   STRIPE_API_KEY_ENCRYPTION_KEY -- base64, exactly 32 random bytes.
+
+# Production naming. Never deploy this environment without Galen's explicit go-ahead.
+[env.production]
+name = "businesssuite-payments"
+
+[env.production.vars]
+SERVICE_ENVIRONMENT = "production"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "businesssuite-payments"
+# REPLACE with the id printed by `npx wrangler d1 create businesssuite-payments`.
+database_id = "REPLACE_WITH_PRODUCTION_D1_DATABASE_ID"
