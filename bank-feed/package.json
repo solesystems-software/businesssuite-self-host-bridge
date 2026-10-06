@@ -1,0 +1,18 @@
+{
+  "name": "businesssuite-cloudflare-bank-feeds",
+  "private": true,
+  "version": "0.11.0",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test:local": "node test/run-local-e2e.mjs",
+    "schema:remote": "wrangler d1 execute businesssuite-bank-feeds-dev --remote --file=./schema.sql",
+    "migrate:remote": "wrangler d1 migrations apply businesssuite-bank-feeds-dev --remote"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260702.1",
+    "typescript": "5.2.2",
+    "wrangler": "4.107.0"
+  }
+}
