@@ -23,19 +23,7 @@ import {
   methodNotAllowed,
   notFoundResponse,
 } from './clientPortalWorkerHttp'
-import {
-  handleCreateBusinessPaymentIntent,
-  handleCreatePortalPaymentIntent,
-  handleGetPaymentStatus,
-  handleMockCompletePayment,
-  handlePaymentGatewayDisconnect,
-  handlePaymentGatewayStatus,
-  handlePaymentGatewayStripeOAuthCallback,
-  handlePaymentGatewayStripeOAuthStart,
-  handleStripeWebhook,
-} from './paymentGatewayRoutes'
 import { renderEmbedShellHtml } from './embedShellPage'
-import { renderPayEmbedHtml } from './payEmbedPage'
 import type { Env, PortalSchemaVersionRow } from './clientPortalWorkerTypes'
 
 const htmlResponseHeaders = {
@@ -99,16 +87,6 @@ async function handleReadiness(request: Request, env: Env, requestId: string) {
       schemaVersion: schemaVersion.version,
       schemaDescription: schemaVersion.description,
       publishSigningConfigured: Boolean(publishSigningSettings),
-      // Wave 2A: replaces the old LICENSE_SERVICE service-binding presence check (removed -- it
-      // cannot resolve in a customer's own Cloudflare account) with confirmation that the new
-      // HTTPS-based licensing client has a base URL configured. Not a live network call to the
-      // licensing Worker -- see clientPortalLicensingClient.ts for the actual entitlement check,
-      // performed only at publish time.
-      licensingServiceConfigured: Boolean((env.LICENSING_SERVICE_URL || '').trim()),
-      clientPortalLicenseKeyConfigured: Boolean((env.CLIENT_PORTAL_LICENSE_KEY || '').trim()),
-      // Payments Gateway Phase 1: true once Galen has set both Stripe Connect secrets (Phase 5). Until
-      // then the payment gateway routes still work, in deterministic mock mode.
-      stripePaymentGatewayConfigured: Boolean(env.STRIPE_SECRET_KEY && env.STRIPE_CONNECT_CLIENT_ID),
       message: 'SoleSystems Client Portal relay is ready.',
     }, requestId)
   } catch (error) {
@@ -191,47 +169,6 @@ export default {
         return handleRunCleanup(request, env, requestId)
       }
 
-      // Payments_Gateway_Component_Task_Spec_20260829.md Part E Phase 1: Stripe Connect OAuth
-      // skeleton. /business/payment-gateway/* are HMAC business-authenticated; the callback is public
-      // (Stripe redirects the browser to it) and guarded by the single-use `state` row instead.
-      if (pathname === '/business/payment-gateway/stripe/oauth-start') {
-        if (request.method !== 'POST') return methodNotAllowed(requestId)
-        return handlePaymentGatewayStripeOAuthStart(request, env, requestId)
-      }
-      if (pathname === '/business/payment-gateway/status') {
-        if (request.method !== 'POST') return methodNotAllowed(requestId)
-        return handlePaymentGatewayStatus(request, env, requestId)
-      }
-      if (pathname === '/business/payment-gateway/disconnect') {
-        if (request.method !== 'POST') return methodNotAllowed(requestId)
-        return handlePaymentGatewayDisconnect(request, env, requestId)
-      }
-      if (pathname === '/payment-gateway/stripe/oauth-callback') {
-        if (request.method !== 'GET') return methodNotAllowed(requestId)
-        return handlePaymentGatewayStripeOAuthCallback(request, url, env, requestId)
-      }
-
-      // Phase 3: PaymentIntent creation (in-app + Client Portal), payment status, webhook, mock-complete.
-      if (pathname === '/business/payment-gateway/stripe/payment-intent') {
-        if (request.method !== 'POST') return methodNotAllowed(requestId)
-        return handleCreateBusinessPaymentIntent(request, env, requestId)
-      }
-      if (pathname === '/business/payment-gateway/payment-status') {
-        if (request.method !== 'POST') return methodNotAllowed(requestId)
-        return handleGetPaymentStatus(request, env, requestId)
-      }
-      if (pathname === '/payment-gateway/stripe/webhook') {
-        if (request.method !== 'POST') return methodNotAllowed(requestId)
-        return handleStripeWebhook(request, env, requestId)
-      }
-      if (pathname === '/payment-gateway/stripe/mock-complete') {
-        if (request.method !== 'POST') return methodNotAllowed(requestId)
-        return handleMockCompletePayment(request, env, requestId)
-      }
-      if (pathname === '/pay-embed') {
-        if (request.method !== 'GET') return methodNotAllowed(requestId)
-        return new Response(renderPayEmbedHtml(), { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
-      }
 
       const portalMatch = pathname.match(/^\/portal\/([a-f0-9]{64})(\/.*)?$/)
       if (portalMatch) {
@@ -257,10 +194,6 @@ export default {
         if (subPath === '/invoice-event') {
           if (request.method !== 'POST') return methodNotAllowed(requestId)
           return handleSubmitInvoiceEvent(request, env, requestId, inviteToken)
-        }
-        if (subPath === '/payment-intent') {
-          if (request.method !== 'POST') return methodNotAllowed(requestId)
-          return handleCreatePortalPaymentIntent(request, env, requestId, inviteToken)
         }
         const objectMatch = subPath.match(/^\/objects\/([0-9a-f-]{36})$/)
         if (objectMatch) {

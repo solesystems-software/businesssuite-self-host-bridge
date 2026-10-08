@@ -371,12 +371,13 @@ function renderInvoiceSection(invoice) {
   }).catch(function () {});
 }
 
-// Phase 3: a published "Payment Gateway" item -> the Client pays the invoice here. "Pay Now" opens
-// the shared /pay-embed page in an iframe (Stripe card fields run on this HTTPS origin only); a
-// postMessage from that frame updates the status line.
+// A published "Payment Gateway" item -> the Client pays the invoice here. Payments are an independent
+// service: "Pay Now" opens the Payments Worker's hosted payment link (payment.payUrl) in an iframe (the
+// Stripe card fields run on that HTTPS origin only). A postMessage from that frame -- accepted only from
+// the payment link's own origin -- updates the status line. Client Portal takes no payments itself.
 function renderPaymentSection(payment) {
   const section = document.getElementById('portal-payment-section');
-  if (!payment || !payment.invoiceRef) { section.classList.add('portal-hidden'); return; }
+  if (!payment || !payment.invoiceRef || !payment.payUrl) { section.classList.add('portal-hidden'); return; }
   section.classList.remove('portal-hidden');
 
   let amountText;
@@ -391,7 +392,11 @@ function renderPaymentSection(payment) {
   const frameEl = document.getElementById('portal-payment-frame');
   const payButton = document.getElementById('portal-payment-pay');
 
+  let payOrigin = '';
+  try { payOrigin = new URL(payment.payUrl).origin; } catch (e) { section.classList.add('portal-hidden'); return; }
+
   window.addEventListener('message', function (event) {
+    if (event.origin !== payOrigin) return;
     if (!event.data || event.data.type !== 'solesystems-payment') return;
     if (event.data.status === 'succeeded') {
       statusEl.textContent = 'Payment received. Thank you!';
@@ -404,29 +409,16 @@ function renderPaymentSection(payment) {
     }
   });
 
-  payButton.onclick = async function () {
+  payButton.onclick = function () {
     payButton.disabled = true;
-    statusEl.textContent = 'Opening secure payment...';
-    try {
-      const response = await fetch(apiUrl('/portal/' + INVITE_TOKEN + '/payment-intent'), { method: 'POST' });
-      const body = await response.json();
-      if (!body.ok || !body.payEmbedUrl) {
-        statusEl.textContent = body.message || 'Payment is not available right now.';
-        payButton.disabled = false;
-        return;
-      }
-      statusEl.textContent = '';
-      const iframe = document.createElement('iframe');
-      iframe.src = body.payEmbedUrl;
-      iframe.style.width = '100%';
-      iframe.style.height = '520px';
-      iframe.style.border = '0';
-      frameEl.innerHTML = '';
-      frameEl.appendChild(iframe);
-    } catch (err) {
-      statusEl.textContent = 'Unable to start the payment. Please try again.';
-      payButton.disabled = false;
-    }
+    statusEl.textContent = '';
+    const iframe = document.createElement('iframe');
+    iframe.src = payment.payUrl;
+    iframe.style.width = '100%';
+    iframe.style.height = '520px';
+    iframe.style.border = '0';
+    frameEl.innerHTML = '';
+    frameEl.appendChild(iframe);
   };
 }
 

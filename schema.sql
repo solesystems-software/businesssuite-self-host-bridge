@@ -170,81 +170,8 @@ CREATE TABLE IF NOT EXISTS portal_request_nonces (
 CREATE INDEX IF NOT EXISTS idx_portal_request_nonces_expires
   ON portal_request_nonces(expires_at);
 
--- Payments_Gateway_Component_Task_Spec_20260829.md Part C (locked decision) + Part E Phase 1: the
--- payment gateway is a new element inside the existing Client Portal Worker, per Business, not a
--- separate Worker. One row per (business, provider) recording the OAuth-connected processor account.
--- Only 'stripe' is populated in this pass; the CHECK already accepts the union this project intends
--- so Square/PayPal are additive later (Part D). The Stripe platform secret key and Connect client id
--- live on this same Worker as `wrangler secret put` secrets (STRIPE_SECRET_KEY / STRIPE_CONNECT_CLIENT_ID),
--- mirroring CLIENT_PORTAL_PUBLISH_SIGNING_SECRET's single-secret-per-Worker shape.
-CREATE TABLE IF NOT EXISTS portal_payment_gateway_connections (
-  business_id TEXT NOT NULL REFERENCES portal_businesses(id),
-  provider TEXT NOT NULL CHECK (provider IN ('stripe', 'square', 'paypal')),
-  connected_account_id TEXT NOT NULL,
-  account_status TEXT NOT NULL DEFAULT 'connected',
-  scope TEXT,
-  livemode INTEGER NOT NULL DEFAULT 0,
-  connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  disconnected_at TEXT,
-  PRIMARY KEY (business_id, provider)
-);
-
-CREATE INDEX IF NOT EXISTS idx_portal_payment_gateway_connections_business
-  ON portal_payment_gateway_connections(business_id);
-
--- One row per outstanding OAuth authorize round trip. The `state` value is the CSRF/replay guard
--- carried through the provider's authorize -> callback redirect; a row is single-use (consumed_at set
--- on first callback) and time-limited (expires_at). Same "claim once, expire on a sweep" shape as
--- portal_request_nonces.
-CREATE TABLE IF NOT EXISTS portal_payment_gateway_oauth_states (
-  state TEXT PRIMARY KEY,
-  business_id TEXT NOT NULL,
-  provider TEXT NOT NULL CHECK (provider IN ('stripe', 'square', 'paypal')),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  expires_at TEXT NOT NULL,
-  consumed_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_portal_payment_gateway_oauth_states_expires
-  ON portal_payment_gateway_oauth_states(expires_at);
-
 INSERT OR IGNORE INTO portal_schema_versions (version, description)
 VALUES (1, 'Phase 1: businesses/clients/access grants/current snapshots/packet inbox+outbox/file objects/sync receipts/cleanup log/request nonces.');
-
-INSERT OR IGNORE INTO portal_schema_versions (version, description)
-VALUES (2, 'Payments Gateway Phase 1: portal_payment_gateway_connections + portal_payment_gateway_oauth_states (Stripe Connect OAuth skeleton -- connect/status/disconnect only; charge creation + webhooks are Phase 3).');
-
--- Payments_Gateway_Component_Task_Spec_20260829.md Part E Phase 3: one row per payment attempt for a
--- desktop invoice, created when a PaymentIntent is opened and updated by the Stripe webhook (or, in
--- mock mode, by /payment-gateway/stripe/mock-complete). invoice_ref is the desktop app's own opaque
--- sales_invoices.id -- never interpreted here. method distinguishes the two collection paths.
-CREATE TABLE IF NOT EXISTS portal_payments (
-  id TEXT PRIMARY KEY,
-  business_id TEXT NOT NULL REFERENCES portal_businesses(id),
-  connected_account_id TEXT,
-  invoice_ref TEXT NOT NULL,
-  amount_cents INTEGER NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'usd',
-  provider TEXT NOT NULL DEFAULT 'stripe' CHECK (provider IN ('stripe', 'square', 'paypal')),
-  method TEXT NOT NULL CHECK (method IN ('card_in_app', 'client_portal_link')),
-  payment_intent_id TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'requires_payment'
-    CHECK (status IN ('requires_payment', 'processing', 'succeeded', 'failed', 'canceled')),
-  access_grant_id TEXT,
-  client_id TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  succeeded_at TEXT
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_portal_payments_payment_intent
-  ON portal_payments(payment_intent_id);
-CREATE INDEX IF NOT EXISTS idx_portal_payments_business_invoice
-  ON portal_payments(business_id, invoice_ref);
-
-INSERT OR IGNORE INTO portal_schema_versions (version, description)
-VALUES (3, 'Payments Gateway Phase 3: portal_payments (PaymentIntent lifecycle for desktop invoices; webhook + mock-complete update status and enqueue a payment_received packet for the desktop to import).');
 
 -- Cloudflare_Self_Hosting_Implementation_Task_Spec_20260928.md Wave 2A: single-row Worker-wide
 -- settings, self-bootstrapped on first use instead of supplied as a Worker secret -- same shape and
@@ -262,3 +189,11 @@ CREATE TABLE IF NOT EXISTS client_portal_worker_settings (
 
 INSERT OR IGNORE INTO portal_schema_versions (version, description)
 VALUES (4, 'Cloudflare Self-Hosting Wave 2A: client_portal_worker_settings (self-bootstrapped publish signing secret, replacing the CLIENT_PORTAL_PUBLISH_SIGNING_SECRET Worker secret).');
+
+-- Payments moved out of Client Portal (Galen, 2026-09-29): invoice payments work whether or not an invoice
+-- is ever sent through Client Portal, so they are an independent Worker (cloudflare-payments) with its own
+-- database. The payment tables (Connect OAuth connections/states, payment attempts, per-Business Stripe
+-- keys) are no longer created here. An already-deployed database keeps any leftover payment tables
+-- untouched and unused; they can be dropped by hand.
+INSERT OR IGNORE INTO portal_schema_versions (version, description)
+VALUES (6, 'Payments moved to its own Worker (cloudflare-payments); payment tables are no longer part of the Client Portal schema.');

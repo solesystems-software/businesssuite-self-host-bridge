@@ -4,27 +4,19 @@ compatibility_date = "2026-08-22"
 workers_dev = true
 preview_urls = false
 
+# Client Portal is independent of licensing and of every other Worker (Galen, 2026-09-30): no licensing URL, no
+# license key, no service binding. Requests are authenticated by this Worker's own self-bootstrapped publish signing
+# secret (client_portal_worker_settings in schema.sql, see getOrCreatePublishSigningSecretBase64 in
+# clientPortalRequestAuthentication.ts) -- it is not a Worker secret and must not become one.
+
 [vars]
 SERVICE_ENVIRONMENT = "development"
-# Cloudflare_Self_Hosting_Implementation_Task_Spec_20260928.md Wave 2A: base URL of the centrally
-# hosted licensing Worker's public, license-key-authenticated POST /check-client-portal-access route
-# (Wave 1A, cloudflare/src/licenseRoutes.ts's handleCheckClientPortalAccess). Replaces the same-account
-# LICENSE_SERVICE [[services]] binding below, which cannot resolve in a customer's own Cloudflare
-# account -- see clientPortalLicensingClient.ts. A [vars] entry, not a secret: it is a public HTTPS
-# endpoint address, not sensitive. Wave 4A (2026-09-28): confirmed against the actual live deploy --
-# licensing-and-updates-dev is a SEPARATE Cloudflare account from self-host-bridge-dev (this Worker's
-# own account) with its OWN workers.dev subdomain ("solebusinesssuite-licensing-dev"), distinct from
-# self-host-bridge-dev's "sole-businesssuite" subdomain used elsewhere in this account -- the earlier
-# same-subdomain inference was wrong. Smoke-tested live: POST with a bogus key returns 401 as expected.
-LICENSING_SERVICE_URL = "https://businesssuite-licensing-dev.solebusinesssuite-licensing-dev.workers.dev"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "businesssuite-client-portal-dev"
 database_id = "53bd2b73-63e6-4a9c-b4f3-db6a39cdc68b"
 
-# Restored 2026-08-22 -- Galen granted Workers R2 Storage:Edit on the CLOUDFLARE_API_TOKEN and the
-# bucket was created (npx wrangler r2 bucket create businesssuite-client-portal-files-dev).
 [[r2_buckets]]
 binding = "FILES"
 bucket_name = "businesssuite-client-portal-files-dev"
@@ -34,51 +26,27 @@ bucket_name = "businesssuite-client-portal-files-dev"
 [triggers]
 crons = ["0 3 * * *"]
 
-# Payments_Gateway_Component_Task_Spec_20260829.md Part E Phase 1/5: the Stripe Connect platform
-# application's credentials are Worker secrets, set (in Phase 5) with:
-#   npx wrangler secret put STRIPE_SECRET_KEY
-#   npx wrangler secret put STRIPE_CONNECT_CLIENT_ID
-# Until both are set, paymentGatewayRoutes.ts runs in deterministic mock mode -- but (Wave 2A) only
-# when SERVICE_ENVIRONMENT is "development"; any other environment with the secrets unset now fails
-# closed with a "payments unavailable" response instead. Not declared here because secrets are never
-# stored in wrangler.toml.
-#
-# Cloudflare_Self_Hosting_Implementation_Task_Spec_20260928.md Wave 2A: CLIENT_PORTAL_LICENSE_KEY is
-# a new Worker secret (`npx wrangler secret put CLIENT_PORTAL_LICENSE_KEY`) holding the Business's own
-# license key, entered once during setup -- gates POST /business/publish-snapshot on the licensing
-# Worker's Client Portal entitlement check (clientPortalLicensingClient.ts). Customer-supplied, so
-# unlike CLIENT_PORTAL_PUBLISH_SIGNING_SECRET (below) it is never self-bootstrapped. Left unset in this
-# dev Worker for now: handlePublishSnapshot treats an unset key as entitled only while
-# SERVICE_ENVIRONMENT is "development", so existing dev/test publish flows are unaffected until a real
-# key is wired in (Wave 4's setup screen).
-#
-# CLIENT_PORTAL_PUBLISH_SIGNING_SECRET was previously also a Worker secret here; Wave 2A replaced it
-# with a self-bootstrapped single-row D1 table (client_portal_worker_settings, schema.sql) generated
-# on first use -- see getOrCreatePublishSigningSecretBase64 in clientPortalRequestAuthentication.ts.
-# It is no longer read from env at all and must not be reintroduced as a Worker secret.
-
-# Cloudflare_Self_Hosting_Wave4_Provisioning_Task_Spec_20260928.md Wave 4A: production naming.
-# This same, unmodified wrangler.toml is what every self-hosted customer account deploys via
-# `wrangler deploy --env production` -- there is no self-hosting-specific variant (design doc,
-# Resolved Decisions #4). Deployed into `self-host-bridge` Production, this is a clone/deploy-flow
-# validation rehearsal only, never live traffic (design doc, corrected 2026-09-28) -- the only
-# deployment of this env block that actually serves real customer traffic is each self-hosted
-# customer's own account.
+# Production naming. `wrangler deploy --env production` deploys `businesssuite-client-portal`. This file is the same,
+# unmodified file every self-hosted customer deploys from (design doc, Resolved Decisions #4), so it carries NO
+# account-specific ids: the Deploy Now installer (src/main/services/selfHosting/SelfHostingDeployService.ts) looks up or
+# creates the D1 database and R2 bucket named below in the customer's own Cloudflare account, applies schema.sql,
+# and deploys with a copy of this file that has the real database id filled in. Deploying by hand: create the database
+# (`npx wrangler d1 create businesssuite-client-portal`) and the bucket, then put the printed id in place of the
+# placeholder below -- but do not commit a real id.
 [env.production]
 name = "businesssuite-client-portal"
 
 [env.production.vars]
 SERVICE_ENVIRONMENT = "production"
-# The licensing Worker's PRODUCTION URL (licensing-and-updates account) -- deployed and confirmed
-# live 2026-09-29 (POST /check-client-portal-access smoke-tested, 401 for an unknown key).
-LICENSING_SERVICE_URL = "https://businesssuite-licensing.solebusinesssuite-licensing.workers.dev"
+
+# Environments do not inherit [triggers]; without this the production Worker never runs its daily cleanup.
+[env.production.triggers]
+crons = ["0 3 * * *"]
 
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "businesssuite-client-portal"
-# This is self-host-bridge's validation-rehearsal database (see comment block above). A real
-# self-hosted customer deploy creates and fills in its own id for its own account.
-database_id = "5838847d-5174-4c5e-887c-48f5a0d0eb2c"
+database_id = "REPLACE_WITH_PRODUCTION_D1_DATABASE_ID"
 
 [[env.production.r2_buckets]]
 binding = "FILES"

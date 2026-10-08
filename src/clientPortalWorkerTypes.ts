@@ -6,30 +6,6 @@ export type Env = {
   // shared HMAC secret with a self-bootstrapped single-row D1 table (client_portal_worker_settings) --
   // see getOrCreatePublishSigningSecretBase64 in clientPortalRequestAuthentication.ts. No longer read
   // from env anywhere; do not reintroduce this field.
-  // Wave 2A: base URL of the centrally hosted licensing Worker's public /check-client-portal-access
-  // route (see clientPortalLicensingClient.ts). Replaces the same-account LICENSE_SERVICE service
-  // binding, which cannot resolve in a customer's own Cloudflare account. A [vars] entry (wrangler.toml),
-  // not a secret -- it is a public HTTPS endpoint address, not sensitive.
-  LICENSING_SERVICE_URL: string
-  // Wave 2A: the Business's own license key, entered once during setup (customer-supplied, not
-  // Worker-generated -- unlike the publish signing secret above, so it is not self-bootstrapped).
-  // Pushed via `wrangler secret put CLIENT_PORTAL_LICENSE_KEY`. Used by checkPublishEntitlement
-  // (clientPortalLicensingClient.ts) to gate POST /business/publish-snapshot on this Business's
-  // Client Portal entitlement, checked against the licensing Worker at LICENSING_SERVICE_URL.
-  CLIENT_PORTAL_LICENSE_KEY?: string
-  // Payments_Gateway_Component_Task_Spec_20260829.md Part E Phase 1: the Stripe Connect platform
-  // application's secret key and client id, pushed via `wrangler secret put` (Phase 5). When either is
-  // absent the payment gateway routes run in a deterministic mock mode -- the OAuth token exchange
-  // synthesizes an `acct_mock_*` connected account instead of calling connect.stripe.com -- so Phases
-  // 1/3's acceptance bars ("exercised against a stubbed/mocked Stripe response") can be met with no
-  // real credentials. Phase 5 sets these and the same code path reaches real Stripe.
-  STRIPE_SECRET_KEY?: string
-  STRIPE_CONNECT_CLIENT_ID?: string
-  // Phase 3: the publishable key is returned to the browser (invoice pay page / Client Portal
-  // payment view) so Stripe.js can be initialised; the webhook signing secret verifies incoming
-  // Stripe webhook events. Both absent -> mock mode (no real Stripe call, deterministic pi_mock_*).
-  STRIPE_PUBLISHABLE_KEY?: string
-  STRIPE_WEBHOOK_SECRET?: string
 }
 
 export type JsonBody = Record<string, unknown>
@@ -206,53 +182,7 @@ export type PortalPacketInboxRow = {
   acknowledged_at: string | null
 }
 
-// Payments_Gateway_Component_Task_Spec_20260829.md Part E Phase 1.
-export type PortalPaymentGatewayProvider = 'stripe' | 'square' | 'paypal'
-
-export type PortalPaymentGatewayConnectionRow = {
-  business_id: string
-  provider: PortalPaymentGatewayProvider
-  connected_account_id: string
-  account_status: string
-  scope: string | null
-  livemode: number
-  connected_at: string
-  updated_at: string
-  disconnected_at: string | null
-}
-
-export type PortalPaymentGatewayOAuthStateRow = {
-  state: string
-  business_id: string
-  provider: PortalPaymentGatewayProvider
-  created_at: string
-  expires_at: string
-  consumed_at: string | null
-}
-
-// Phase 3.
-export type PortalPaymentMethod = 'card_in_app' | 'client_portal_link'
-export type PortalPaymentStatus = 'requires_payment' | 'processing' | 'succeeded' | 'failed' | 'canceled'
-
-export type PortalPaymentRow = {
-  id: string
-  business_id: string
-  connected_account_id: string | null
-  invoice_ref: string
-  amount_cents: number
-  currency: string
-  provider: PortalPaymentGatewayProvider
-  method: PortalPaymentMethod
-  payment_intent_id: string
-  status: PortalPaymentStatus
-  access_grant_id: string | null
-  client_id: string | null
-  created_at: string
-  updated_at: string
-  succeeded_at: string | null
-}
-
-// Phase 3: the "Payment Gateway" item a Business can publish for a Record -- carried in the snapshot
+// The "Payment Gateway" item a Business can publish for a Record -- carried in the snapshot
 // payload alongside documents/photos/notesHtml. Mirrors src/shared/types/clientPortal.ts's
 // ClientPortalSnapshotPayment (hand-synced, same as the other snapshot types in this file).
 export type PortalSnapshotPayment = {
@@ -260,4 +190,7 @@ export type PortalSnapshotPayment = {
   title: string
   amountCents: number
   currency: string
+  // The hosted payment link (the independent Payments Worker's /pay/{token} page) this portal page
+  // opens for "Pay Now". Client Portal only embeds the URL; it takes no payments itself.
+  payUrl: string
 }

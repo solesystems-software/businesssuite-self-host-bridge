@@ -2,7 +2,6 @@ import {
   authenticateBusinessBinaryRequest,
   authenticateBusinessJsonRequest,
 } from './clientPortalRequestAuthentication'
-import { checkPublishEntitlement } from './clientPortalLicensingClient'
 import {
   badRequest,
   jsonResponse,
@@ -88,6 +87,12 @@ function validateSnapshotPayload(snapshot: unknown): string | null {
       return 'snapshot.payment.amountCents must be a positive number.'
     }
     if (!isNonEmptyString(payment.currency)) return 'snapshot.payment.currency is required.'
+    try {
+      const payUrl = new URL(String(payment.payUrl || ''))
+      if (payUrl.protocol !== 'https:' && payUrl.protocol !== 'http:') return 'snapshot.payment.payUrl must be an http(s) URL.'
+    } catch {
+      return 'snapshot.payment.payUrl is required.'
+    }
   }
 
   // BS-2: optional published Estimate item.
@@ -153,15 +158,6 @@ async function findOrCreateAccessGrant(
 export async function handlePublishSnapshot(request: Request, env: Env, requestId: string): Promise<Response> {
   const auth = await authenticateBusinessJsonRequest(request, env, requestId)
   if (!auth.ok) return auth.response
-
-  // Cloudflare_Self_Hosting_Implementation_Task_Spec_20260928.md Wave 2A: check access before a
-  // publish is allowed, using the Business's own license key (see clientPortalLicensingClient.ts).
-  // This is the one enforcement point the design doc calls for -- other business-authenticated
-  // routes (upload-object, pending-packets, etc.) are unchanged.
-  const entitlement = await checkPublishEntitlement(env)
-  if (!entitlement.entitled) {
-    return jsonResponse(403, { ok: false, requestId, message: entitlement.message }, requestId)
-  }
 
   const { businessId, body } = auth.request
   const clientId = body.clientId
