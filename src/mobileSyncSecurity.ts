@@ -67,6 +67,24 @@ async function getOrCreateWorkerEncryptionKeyB64(env: Env): Promise<string> {
   return row.credential_encryption_key_b64
 }
 
+// The desktop bootstrap secret lives in the same single settings row and is created the same race-safe
+// way: make sure the row exists, set the column only while it is still NULL, then re-read whichever value won.
+export async function getOrCreateDesktopBootstrapSecretB64(env: Env): Promise<string> {
+  await getOrCreateWorkerEncryptionKeyB64(env)
+  const read = () => env.DB.prepare(
+    'SELECT desktop_bootstrap_secret_b64 AS secret FROM mobile_sync_worker_settings WHERE singleton_id = 1'
+  ).first<{ secret: string | null }>()
+  const existing = await read()
+  if (existing?.secret) return existing.secret
+  const generated = encodeBase64(crypto.getRandomValues(new Uint8Array(32)))
+  await env.DB.prepare(
+    'UPDATE mobile_sync_worker_settings SET desktop_bootstrap_secret_b64 = ? WHERE singleton_id = 1 AND desktop_bootstrap_secret_b64 IS NULL'
+  ).bind(generated).run()
+  const row = await read()
+  if (!row?.secret) throw new Error('Mobile Sync desktop bootstrap secret bootstrap failed.')
+  return row.secret
+}
+
 async function importEncryptionKey(env: Env, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
   const bytes = decodeBase64(await getOrCreateWorkerEncryptionKeyB64(env))
   if (bytes.byteLength !== 32) throw new Error('Mobile Sync credential encryption key is invalid.')

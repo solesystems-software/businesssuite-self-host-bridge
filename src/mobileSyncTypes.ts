@@ -4,6 +4,7 @@ export interface Env {
   DB: D1Database
   PAYLOADS: R2Bucket
   SERVICE_ENVIRONMENT: string
+  // Optional, development Workers only: an extra accepted desktop bootstrap secret for test harnesses.
   MOBILE_SYNC_DEVELOPMENT_BOOTSTRAP_SECRET?: string
   ACCOUNT_SYNC_CHANNEL: DurableObjectNamespace
 }

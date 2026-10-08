@@ -1,5 +1,5 @@
 import { isIdentifier, isSha256, maximumMediaBodyBytes, parsePacketEnvelope, sha256, sha256Bytes, stableStringify } from './mobileSyncProtocol'
-import { applyRateLimit, authenticateRequest, createCredentialSecret, encryptCredentialSecret } from './mobileSyncSecurity'
+import { applyRateLimit, authenticateRequest, createCredentialSecret, encryptCredentialSecret, getOrCreateDesktopBootstrapSecretB64 } from './mobileSyncSecurity'
 import type { AuthenticatedRequest, Env, PacketEnvelopeV1 } from './mobileSyncTypes'
 
 export { AccountSyncChannel } from './accountSyncChannel'
@@ -42,18 +42,18 @@ async function secured(input: {
 }
 
 async function bootstrap(request: Request, env: Env, requestId: string) {
-  // Dev-only endpoint (404 anywhere else). A bootstrap secret is OPTIONAL in
-  // development: when MOBILE_SYNC_DEVELOPMENT_BOOTSTRAP_SECRET is set it must match,
-  // but a dev Worker with no secret configured accepts any request so the desktop
-  // can provision itself with zero operator steps. Production never reaches here.
-  if (env.SERVICE_ENVIRONMENT !== 'development') return response({ ok: false, error: 'not_found' }, 404, requestId)
-  const configured = env.MOBILE_SYNC_DEVELOPMENT_BOOTSTRAP_SECRET || ''
-  if (configured) {
-    const supplied = request.headers.get('x-solesystems-bootstrap-secret') || ''
-    if (!supplied || await sha256(configured) !== await sha256(supplied)) {
-      return response({ ok: false, error: 'authentication_failed' }, 401, requestId)
-    }
-  }
+  // Served in every environment. The desktop must present this Worker's own bootstrap secret, which the
+  // Worker generates for itself in D1 on first request (so any request here, even a rejected one, makes
+  // sure it exists for the owner's Deploy Now / manual read). Nothing about it comes from licensing.
+  // MOBILE_SYNC_DEVELOPMENT_BOOTSTRAP_SECRET remains an optional extra accepted secret on a DEVELOPMENT
+  // Worker only, so local/deployed test harnesses can supply their own.
+  const stored = await getOrCreateDesktopBootstrapSecretB64(env)
+  const supplied = request.headers.get('x-solesystems-bootstrap-secret') || ''
+  const developmentSecret = env.SERVICE_ENVIRONMENT === 'development' ? env.MOBILE_SYNC_DEVELOPMENT_BOOTSTRAP_SECRET || '' : ''
+  const suppliedHash = supplied ? await sha256(supplied) : ''
+  const accepted = Boolean(supplied) && (suppliedHash === await sha256(stored)
+    || (Boolean(developmentSecret) && suppliedHash === await sha256(developmentSecret)))
+  if (!accepted) return response({ ok: false, error: 'authentication_failed' }, 401, requestId)
   const body = object(await request.text())
   const account = clean(body?.account_sync_id)
   const client = clean(body?.desktop_client_id)
@@ -595,7 +595,7 @@ export default {
     const path = new URL(request.url).pathname
     try {
       if (request.method === 'GET' && path === '/health') return response({ status: 'ok', environment: env.SERVICE_ENVIRONMENT, protocol_version: 1 }, 200, requestId)
-      if (request.method === 'POST' && path === '/v1/dev/bootstrap') return bootstrap(request, env, requestId)
+      if (request.method === 'POST' && path === '/v1/desktop/bootstrap') return bootstrap(request, env, requestId)
       if (request.method === 'GET' && path === '/v1/dev/inspect') return inspectDevelopment(request, env, requestId)
       if (request.method === 'POST' && path === '/v1/pairing-claims') return claimPairing(request, env, requestId)
       if (request.method === 'POST' && path === '/v1/pairing-sessions') return secured({ request, env, role: 'desktop', endpoint: 'pairing_sessions', requestId, started,

@@ -44,7 +44,7 @@ const runtimeRoot = path.dirname(outputPath)
 const accountSyncId = `live-e2e-${runId}`
 const desktopClientId = `desktop-live-${runId}`
 const issuedAt = new Date().toISOString()
-const bootstrapped = await request('/v1/dev/bootstrap', { method:'POST', headers:{
+const bootstrapped = await request('/v1/desktop/bootstrap', { method:'POST', headers:{
   'x-solesystems-bootstrap-secret':bootstrapSecret,
 }, body:{account_sync_id:accountSyncId, desktop_client_id:desktopClientId} })
 const desktopCredential = {

@@ -97,7 +97,7 @@ async function waitFor(predicate, { attempts = 50, delayMs = 100 } = {}) {
 
 async function bootstrap(account, identity) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    const result = await raw('/v1/dev/bootstrap', { method: 'POST', body: { account_sync_id: account, desktop_client_id: identity },
+    const result = await raw('/v1/desktop/bootstrap', { method: 'POST', body: { account_sync_id: account, desktop_client_id: identity },
       expected: [201, 401], headers: { 'x-solesystems-bootstrap-secret': bootstrapSecret } })
     if (result.status === 201) {
       return { role: 'desktop', account, identity, credential: result.body.credential_id, secret: result.body.credential_secret_base64 }

@@ -26,12 +26,13 @@ tag = "v1-account-sync-channel"
 # durable state either way).
 new_sqlite_classes = ["AccountSyncChannel"]
 
-# Cloudflare_Self_Hosting_Wave4_Provisioning_Task_Spec_20260928.md Wave 4A (businesssuite_iteration
-# repo; this file lives in the sibling businesssuite-mobile_iteration repo). Production naming --
-# this same, unmodified wrangler.toml is what every self-hosted customer account deploys via
-# `wrangler deploy --env production`. Deployed into `self-host-bridge` Production, this is a
-# clone/deploy-flow validation rehearsal only, never live traffic -- every self-hosted customer's
-# own account is the only place this actually serves traffic (design doc, corrected 2026-09-28).
+# Production naming. `wrangler deploy --env production` deploys `businesssuite-mobile-sync`. This is the same,
+# unmodified file every self-hosted customer deploys from, so it carries NO account-specific ids: the Deploy Now installer
+# (businesssuite_iteration: src/main/services/selfHosting/SelfHostingDeployService.ts) looks up or creates the D1
+# database and R2 bucket named below in the customer's own Cloudflare account, applies the migrations, and deploys with a
+# copy of this file that has the real database id filled in. Deploying by hand: create the database
+# (`npx wrangler d1 create businesssuite-mobile-sync`) and bucket, put the printed id in place of the placeholder below,
+# and do not commit it.
 [env.production]
 name = "businesssuite-mobile-sync"
 
@@ -41,9 +42,7 @@ SERVICE_ENVIRONMENT = "production"
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "businesssuite-mobile-sync"
-# This is self-host-bridge's validation-rehearsal database (see comment block above). A real
-# self-hosted customer deploy creates and fills in its own id for its own account.
-database_id = "94fa6ae6-18f8-44f0-bd80-7e79ce039d4f"
+database_id = "REPLACE_WITH_PRODUCTION_D1_DATABASE_ID"
 
 [[env.production.r2_buckets]]
 binding = "PAYLOADS"
@@ -52,3 +51,9 @@ bucket_name = "businesssuite-mobile-sync"
 [[env.production.durable_objects.bindings]]
 name = "ACCOUNT_SYNC_CHANNEL"
 class_name = "AccountSyncChannel"
+
+# Durable Object migrations are declared per environment as well, so the production Worker gets its AccountSyncChannel
+# class on first deploy.
+[[env.production.migrations]]
+tag = "v1-account-sync-channel"
+new_sqlite_classes = ["AccountSyncChannel"]

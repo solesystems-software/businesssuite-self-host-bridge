@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import qrcodeTerminal from 'qrcode-terminal'
 import QRCode from 'qrcode'
 
-const baseUrl = (process.env.MOBILE_SYNC_BASE_URL || 'https://businesssuite-mobile-sync-dev.sole-businesssuite.workers.dev').replace(/\/+$/, '')
+const baseUrl = (process.env.MOBILE_SYNC_BASE_URL || 'https://businesssuite-mobile-sync-dev.solebusinesssuite-selfhostbridge-dev.workers.dev').replace(/\/+$/, '')
 const bootstrapSecret = process.env.MOBILE_SYNC_BOOTSTRAP_SECRET
 const accountSyncId = process.env.MOBILE_SYNC_ACCOUNT_SYNC_ID
 const deviceId = process.env.MOBILE_SYNC_DEVICE_ID || `android-pairing-${randomBytes(4).toString('hex')}`
@@ -30,7 +30,7 @@ async function raw(path, { method = 'GET', body, headers = {}, expected = [200] 
 
 async function bootstrap() {
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    const result = await raw('/v1/dev/bootstrap', {
+    const result = await raw('/v1/desktop/bootstrap', {
       method: 'POST', expected: [201, 401],
       headers: { 'x-solesystems-bootstrap-secret': bootstrapSecret },
       body: { account_sync_id: accountSyncId, desktop_client_id: `desktop-pairing-${randomBytes(4).toString('hex')}` },
