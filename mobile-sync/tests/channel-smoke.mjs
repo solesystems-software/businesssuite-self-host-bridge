@@ -13,7 +13,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 
-const base = (process.env.MOBILE_SYNC_TEST_BASE_URL || 'https://businesssuite-mobile-sync-dev.sole-businesssuite.workers.dev').replace(/\/+$/, '')
+const base = (process.env.MOBILE_SYNC_TEST_BASE_URL || 'https://businesssuite-mobile-sync-dev.solebusinesssuite-selfhostbridge-dev.workers.dev').replace(/\/+$/, '')
 const bootstrapSecret = process.env.MOBILE_SYNC_TEST_BOOTSTRAP_SECRET || ''
 
 const sha256 = v => createHash('sha256').update(v).digest('hex')
