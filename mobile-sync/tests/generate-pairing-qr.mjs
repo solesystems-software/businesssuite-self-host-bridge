@@ -30,7 +30,7 @@ async function raw(path, { method = 'GET', body, headers = {}, expected = [200] 
 
 async function bootstrap() {
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    const result = await raw('/v1/dev/bootstrap', {
+    const result = await raw('/v1/desktop/bootstrap', {
       method: 'POST', expected: [201, 401],
       headers: { 'x-solesystems-bootstrap-secret': bootstrapSecret },
       body: { account_sync_id: accountSyncId, desktop_client_id: `desktop-pairing-${randomBytes(4).toString('hex')}` },

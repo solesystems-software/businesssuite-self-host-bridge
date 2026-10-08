@@ -137,7 +137,7 @@ async function prepare() {
   const runId = randomUUID().slice(0, 12)
   const accountSyncId = `task04-01-${runId}`
   const desktopIdentity = `desktop-task04-01-${runId}`
-  const bootstrapped = await raw('/v1/dev/bootstrap', { method: 'POST', expected: [201],
+  const bootstrapped = await raw('/v1/desktop/bootstrap', { method: 'POST', expected: [201],
     headers: { 'x-solesystems-bootstrap-secret': bootstrapSecret }, body: { account_sync_id: accountSyncId, desktop_client_id: desktopIdentity } })
   const desktopClient = { role: 'desktop', account: accountSyncId, identity: desktopIdentity,
     credential: String(bootstrapped.credential_id), secret: String(bootstrapped.credential_secret_base64) }

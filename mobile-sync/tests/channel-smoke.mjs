@@ -7,7 +7,7 @@
 // packet upload pokes it with a `packets_pending` frame, and `sync_check`
 // returns the current `high_water` sequence.
 //
-// Assumes /v1/dev/bootstrap is reachable (unauthenticated on the dev Worker
+// Assumes /v1/desktop/bootstrap is reachable (unauthenticated on the dev Worker
 // since MOBILE_SYNC_DEVELOPMENT_BOOTSTRAP_SECRET was removed). Set
 // MOBILE_SYNC_TEST_BOOTSTRAP_SECRET to send the header if a Worker still has one.
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
@@ -39,7 +39,7 @@ const sign = (method, path, acct, credential, identity, secret, body = '') => {
   }
 }
 
-const bootstrap = await (await fetch(`${base}/v1/dev/bootstrap`, {
+const bootstrap = await (await fetch(`${base}/v1/desktop/bootstrap`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', ...(bootstrapSecret ? { 'x-solesystems-bootstrap-secret': bootstrapSecret } : {}) },
   body: JSON.stringify({ account_sync_id: account, desktop_client_id: `desktop-${runId}` }),

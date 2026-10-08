@@ -52,6 +52,24 @@ try {
     throw new Error(`Local Worker did not become ready. ${safeOutput}`)
   }
 
+  // Worker-generated desktop bootstrap secret (migration 0005): a request without it is rejected but makes
+  // the Worker create it; reading it out of D1 (what Deploy Now does remotely) then lets the desktop in.
+  // The wrong-secret request also proves the development-only test secret is not the only way in.
+  const bootstrapUrl = 'http://127.0.0.1:8791/v1/desktop/bootstrap'
+  const bootstrapBody = JSON.stringify({ account_sync_id: 'acct-bootstrap-check', desktop_client_id: 'desktop-bootstrap-check' })
+  const rejected = await fetch(bootstrapUrl, { method: 'POST', body: bootstrapBody })
+  if (rejected.status !== 401) throw new Error(`Bootstrap without a secret should be 401, got ${rejected.status}.`)
+  const secretRows = JSON.parse(await run(process.execPath, [wrangler, 'd1', 'execute', 'businesssuite-mobile-sync-dev',
+    '--local', '--persist-to', statePath, '--json', '--command',
+    'SELECT desktop_bootstrap_secret_b64 AS secret FROM mobile_sync_worker_settings WHERE singleton_id = 1']))
+  const workerSecret = secretRows?.[0]?.results?.[0]?.secret
+  if (!workerSecret || Buffer.from(workerSecret, 'base64').byteLength !== 32) throw new Error('Worker did not generate its own bootstrap secret.')
+  const wrong = await fetch(bootstrapUrl, { method: 'POST', body: bootstrapBody, headers: { 'x-solesystems-bootstrap-secret': 'not-the-secret' } })
+  if (wrong.status !== 401) throw new Error(`Bootstrap with a wrong secret should be 401, got ${wrong.status}.`)
+  const accepted = await fetch(bootstrapUrl, { method: 'POST', body: bootstrapBody, headers: { 'x-solesystems-bootstrap-secret': workerSecret } })
+  if (accepted.status !== 201) throw new Error(`Bootstrap with the Worker's own secret should be 201, got ${accepted.status}.`)
+  console.log('Worker-generated bootstrap secret: rejected without, rejected when wrong, accepted with.')
+
   await run(process.execPath, ['tests/deployed-e2e.mjs'], { env: {
     ...safeEnvironment,
     MOBILE_SYNC_TEST_BASE_URL: 'http://127.0.0.1:8791',
