@@ -2,7 +2,7 @@
 // Client-facing invoice-event beacon (POST /portal/{inviteToken}/invoice-event). Mirrors
 // estimateEventValidation.ts -- extracted so it has a dependency-free `node --test` surface
 // (test/invoice-events.test.ts). The only defined invoice event is 'viewed' (opening the published
-// invoice deep-link); payment collection stays on the separate /payment-intent path.
+// invoice deep-link); payment collection lives in the independent Payments Worker.
 
 export type InvoiceEvent = 'viewed'
 
