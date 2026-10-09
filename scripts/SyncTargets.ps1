@@ -20,19 +20,25 @@ function Get-SyncTargets {
   )
 }
 
-# Re-splits one target's Head subdirectory into its export branch (safe to re-run; recomputes from
-# Head's current HEAD each time) and fetches it into this repo. Shared by first-time setup and
-# every later sync -- the split/fetch step is identical in both cases, only the subtree command
-# (add vs. pull) differs.
+# Re-splits one target's Head subdirectory into its export branch and fetches it into this repo.
+# Shared by first-time setup and every later sync -- the split/fetch step is identical in both
+# cases, only the subtree command (add vs. pull) differs.
 function Sync-TargetSplit {
   param([hashtable]$Target)
   Write-Host "--- Splitting $($Target.Label) from $($Target.HeadRepoPath)\$($Target.SubdirInHead) ---"
   Push-Location $Target.HeadRepoPath
-  # --onto reuses the previous split's result as a starting point, so this only walks Head commits
-  # made since then instead of the whole history every time. Needs $Target.ExportBranch to already
-  # exist in the Head repo from a prior split (true for all current targets); a brand-new target's
-  # very first split has no prior branch to pass, so drop --onto just for that one-time run.
-  git subtree split --prefix=$($Target.SubdirInHead) --onto=$($Target.ExportBranch) -b "$($Target.ExportBranch)-tmp" | Out-Null
+  # --rejoin leaves a "Split '<prefix>/' into commit '<sha>'" merge commit on whichever branch is
+  # currently checked out in Head; a later split with --rejoin finds that marker in history and only
+  # walks commits made since it, instead of the whole history every time (plain --onto does NOT do
+  # this on its own -- it only changes where the new commits attach, it still walks everything).
+  # The marker lands on whatever branch Head has checked out right now, so this refuses to run
+  # unless that is main -- do not run this sync against any other checked-out branch in Head.
+  $headBranch = git rev-parse --abbrev-ref HEAD
+  if ($headBranch -ne 'main') {
+    Pop-Location
+    throw "$($Target.HeadRepoPath) has '$headBranch' checked out, not 'main' -- switch Head to main before syncing, so the --rejoin marker commit lands on the right branch."
+  }
+  git subtree split --prefix=$($Target.SubdirInHead) --rejoin -b "$($Target.ExportBranch)-tmp" | Out-Null
   git branch -f $Target.ExportBranch "$($Target.ExportBranch)-tmp"
   git branch -D "$($Target.ExportBranch)-tmp" | Out-Null
   Pop-Location
