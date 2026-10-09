@@ -1,14 +1,15 @@
 # businesssuite-self-host-bridge
 
-Public repository a self-hosting customer's Deploy-to-Cloudflare button or installer script
-deploys from. Contains only the cloneable subset of Sole Business Suite's Cloudflare
-infrastructure: no licensing code, no bank-feed code, no secrets, no Stripe integration.
+Public repository for Sole Business Suite users to deploy copies of the self-hosted Cloudflare
+infrastructure. Contains no licensing code, no bank-feed code, no secrets, no Stripe integration.
 
 ## Structure
 
 ```
+bank-feed/   Client Portal Worker (synced from businesssuite/cloudflare-bank-feed/)
 client-portal/   Client Portal Worker (synced from businesssuite/cloudflare-client-portal/)
 mobile-sync/     Mobile Sync Worker   (synced from businesssuite-mobile/cloudflare-mobile-sync/)
+mobile-sync/   Client Portal Worker (synced from businesssuite/cloudflare-mobile-sync/)
 ```
 
 Each subdirectory is a fully isolated Worker project with its own `wrangler.toml`, required so
