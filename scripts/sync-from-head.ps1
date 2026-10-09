@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Syncs all four Worker targets (client-portal, bank-feed, payments, mobile-sync) from the Head
-  repos into this repo via git subtree, preserving file history, and pushes the result. Run this
+  repos into this repo via git subtree, preserving file history. It does NOT push; push by hand. Run this
   after merging iteration work into Head -- wired up as a SourceTree Custom Action (Repository
   menu > Custom Actions... in this repo, or Tools > Options > Custom Actions for all repos):
   Script to run `powershell.exe`, Parameters
@@ -24,8 +24,7 @@ foreach ($target in Get-SyncTargets) {
 
 $ahead = git rev-list --count '@{u}..HEAD' 2>$null
 if ($LASTEXITCODE -eq 0 -and [int]$ahead -gt 0) {
-  Write-Host "--- Pushing $ahead commit(s) ---"
-  git push
+  Write-Host "--- $ahead commit(s) ready to push. Not pushed automatically: review, then run 'git push' yourself. ---"
 } else {
   Write-Host "--- Nothing new to push (all four targets already up to date) ---"
 }
