@@ -6,10 +6,10 @@ infrastructure. Contains no licensing code, no bank-feed code, no secrets, no St
 ## Structure
 
 ```
-bank-feed/   Client Portal Worker (synced from businesssuite/cloudflare-bank-feed/)
+bank-feed/   Bank Feed Worker (synced from businesssuite/cloudflare-bank-feed/)
 client-portal/   Client Portal Worker (synced from businesssuite/cloudflare-client-portal/)
 mobile-sync/     Mobile Sync Worker   (synced from businesssuite-mobile/cloudflare-mobile-sync/)
-mobile-sync/   Client Portal Worker (synced from businesssuite/cloudflare-mobile-sync/)
+payments/   Payments Worker (synced from businesssuite/cloudflare-payments/)
 ```
 
 Each subdirectory is a fully isolated Worker project with its own `wrangler.toml`, required so
