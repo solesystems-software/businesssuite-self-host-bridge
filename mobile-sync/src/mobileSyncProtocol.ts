@@ -23,11 +23,15 @@ export async function sha256Bytes(value: ArrayBuffer | Uint8Array): Promise<stri
   return encodeHex(await crypto.subtle.digest('SHA-256', bytes))
 }
 
+// Matches JSON.stringify's own undefined handling (object keys with an undefined value are
+// dropped, array elements become null) -- the actual bytes that cross the wire, so this canonical
+// form has to agree with them: computing this over the pre-transmission object must equal
+// recomputing it over whatever JSON.parse(JSON.stringify(...)) produces on the other end.
 export function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  if (Array.isArray(value)) return `[${value.map(item => stableStringify(item === undefined ? null : item)).join(',')}]`
   const object = value as Record<string, unknown>
-  return `{${Object.keys(object).sort().map(key => `${JSON.stringify(key)}:${stableStringify(object[key])}`).join(',')}}`
+  return `{${Object.keys(object).filter(key => object[key] !== undefined).sort().map(key => `${JSON.stringify(key)}:${stableStringify(object[key])}`).join(',')}}`
 }
 
 export function isIdentifier(value: unknown, minimum = 3, maximum = 160): value is string {
