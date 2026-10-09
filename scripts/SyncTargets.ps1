@@ -28,7 +28,11 @@ function Sync-TargetSplit {
   param([hashtable]$Target)
   Write-Host "--- Splitting $($Target.Label) from $($Target.HeadRepoPath)\$($Target.SubdirInHead) ---"
   Push-Location $Target.HeadRepoPath
-  git subtree split --prefix=$($Target.SubdirInHead) -b "$($Target.ExportBranch)-tmp" | Out-Null
+  # --onto reuses the previous split's result as a starting point, so this only walks Head commits
+  # made since then instead of the whole history every time. Needs $Target.ExportBranch to already
+  # exist in the Head repo from a prior split (true for all current targets); a brand-new target's
+  # very first split has no prior branch to pass, so drop --onto just for that one-time run.
+  git subtree split --prefix=$($Target.SubdirInHead) --onto=$($Target.ExportBranch) -b "$($Target.ExportBranch)-tmp" | Out-Null
   git branch -f $Target.ExportBranch "$($Target.ExportBranch)-tmp"
   git branch -D "$($Target.ExportBranch)-tmp" | Out-Null
   Pop-Location
