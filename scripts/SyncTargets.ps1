@@ -38,6 +38,17 @@ function Sync-TargetSplit {
     Pop-Location
     throw "$($Target.HeadRepoPath) has '$headBranch' checked out, not 'main' -- switch Head to main before syncing, so the --rejoin marker commit lands on the right branch."
   }
+  # --rejoin creates a real commit on this checked-out branch, so Head's own working tree must
+  # pass the same clean-tree check as the bridge repo's -- including the same Windows CRLF false
+  # positive Assert-CleanWorkingTree below exists to clear.
+  git update-index -q --refresh | Out-Null
+  $headDirty = git status --porcelain
+  if ($headDirty) {
+    Pop-Location
+    Write-Host "--- $($Target.HeadRepoPath) has real uncommitted changes, cannot --rejoin: ---"
+    Write-Host $headDirty
+    throw "Head's working tree has uncommitted changes -- commit or discard them there, then re-run this script."
+  }
   git subtree split --prefix=$($Target.SubdirInHead) --rejoin -b "$($Target.ExportBranch)-tmp" | Out-Null
   git branch -f $Target.ExportBranch "$($Target.ExportBranch)-tmp"
   git branch -D "$($Target.ExportBranch)-tmp" | Out-Null
