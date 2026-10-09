@@ -219,10 +219,6 @@ export async function authenticateBusinessBinaryRequest(
     bodyHash,
   ].join('\n')
 
-  if (env.SERVICE_ENVIRONMENT !== 'development') {
-    return { ok: false, response: unauthorized(requestId) }
-  }
-
   let publishSigningSecret: string
   let expectedSignature: string
   try {
@@ -306,10 +302,6 @@ export async function authenticateBusinessJsonRequest(
     businessId,
     bodyHash,
   ].join('\n')
-
-  if (env.SERVICE_ENVIRONMENT !== 'development') {
-    return { ok: false, response: unauthorized(requestId) }
-  }
 
   let publishSigningSecret: string
   let expectedSignature: string
