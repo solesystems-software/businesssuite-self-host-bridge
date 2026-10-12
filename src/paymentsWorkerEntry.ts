@@ -28,16 +28,21 @@ import type { Env, PaymentsSchemaVersionRow } from './paymentsWorkerTypes'
 // live inside the Client Portal Worker (and the two Workers share no code or bindings).
 
 const serviceName = 'businesssuite-payments'
-const serviceVersion = '0.1.0'
+const serviceVersion = '0.1.3'
 
 // The card page is designed to be embedded (the desktop invoice editor, or a Client Portal page, iframes
-// it). Deliberately omits X-Frame-Options (its absence means "no restriction") and sets frame-ancestors *
+// it). Deliberately omits X-Frame-Options (its absence means "no restriction") and sets frame-ancestors
 // explicitly instead, the modern equivalent every current browser honors. The link token / client secret,
 // not the framing origin, is what gates access.
+//
+// `*` alone is NOT enough: per the CSP spec it matches only network schemes (http, https, ws, wss), and the
+// installed desktop app's renderer is a file:// page, so Chromium blocked the frame and the invoice editor's
+// card pane stayed blank ("Framing '...' violates ... frame-ancestors *"; found 2026-10-10). `file:` is listed
+// as well. Verified in this repo's Electron: `*` blocked, `* file:` loads.
 const htmlResponseHeaders = {
   'Content-Type': 'text/html; charset=utf-8',
   'Cache-Control': 'no-store',
-  'Content-Security-Policy': 'frame-ancestors *',
+  'Content-Security-Policy': 'frame-ancestors * file:',
 }
 
 function normalizePath(pathname: string) {

@@ -163,7 +163,7 @@ try {
   const embedPage = await fetch(`${baseUrl}/pay-embed`)
   assert.equal(embedPage.status, 200)
   assert.match(await embedPage.text(), /js\.stripe\.com\/v3/)
-  assert.equal(embedPage.headers.get('content-security-policy'), 'frame-ancestors *')
+  assert.equal(embedPage.headers.get('content-security-policy'), 'frame-ancestors * file:', 'the desktop renderer is a file:// page, which a bare * does not match')
 
   // Hosted payment link: independent of Client Portal.
   const link1 = await post('/business/payment-gateway/payment-link', { invoiceRef: 'inv-2', amountCents: 9900, currency: 'usd', title: 'Invoice 2' })
