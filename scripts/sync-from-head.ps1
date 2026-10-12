@@ -13,11 +13,17 @@
   existed) add-bank-feed-and-payments.ps1 once to bring those two targets in.
 #>
 
+param([switch]$Full)   # -Full: stock git-subtree, whole Head history, no cache (fallback only; see SyncTargets.ps1)
+
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\SyncTargets.ps1"
 
+# Check everything that could fail late BEFORE any history is walked (a dirty tree here used to be found only after
+# minutes of splitting).
+Test-SyncPreflight -Targets (Get-SyncTargets)
+
 foreach ($target in Get-SyncTargets) {
-  Sync-TargetSplit -Target $target
+  Sync-TargetSplit -Target $target -Full:$Full
   Assert-CleanWorkingTree
   git subtree pull --prefix=$($target.Prefix) $target.RemoteName $target.ExportBranch --squash -m "Sync $($target.Prefix) from Head"
 }

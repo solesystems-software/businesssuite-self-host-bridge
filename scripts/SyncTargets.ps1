@@ -20,39 +20,89 @@ function Get-SyncTargets {
   )
 }
 
+# Git for Windows' own sh.exe (the persistent-cache git-subtree runs under it).
+function Get-GitSh {
+  $git = (Get-Command git -ErrorAction Stop).Source          # ...\Git\cmd\git.exe
+  Join-Path (Split-Path (Split-Path $git)) 'bin\sh.exe'
+}
+
+# Everything that could make a run fail LATE is checked here, before any history is walked, so a run never spends
+# minutes splitting and then dies on something that was knowable at the start. Collects every problem, reports
+# them together, and throws once.
+#
+# Working trees: only THIS repo's tree must be clean (git subtree pull refuses otherwise). The Head repos are only
+# read by the split, so uncommitted work there is fine, and nothing is committed to them any more.
+function Test-SyncPreflight {
+  param([object[]]$Targets, [string]$BridgeRepo = (Get-Location).Path)
+  $problems = @()
+
+  # 1. This repo's working tree (the CRLF refresh is the same false-positive clearing Assert-CleanWorkingTree does).
+  git -C $BridgeRepo update-index -q --refresh | Out-Null
+  $dirty = git -C $BridgeRepo status --porcelain
+  if ($dirty) {
+    $problems += "This repo has uncommitted changes (git subtree pull refuses to run on a dirty tree). Commit or stash them first:`n    " + (($dirty | Select-Object -First 15) -join "`n    ")
+  }
+  $branch = git -C $BridgeRepo rev-parse --abbrev-ref HEAD
+  if ($branch -ne 'main') { $problems += "This repo has '$branch' checked out, not 'main'." }
+
+  # 2. Tools.
+  if (-not (Test-Path (Get-GitSh))) { $problems += "Git for Windows sh.exe not found at $(Get-GitSh)." }
+  foreach ($f in 'git-subtree-persistent', 'subtree-persistent.sh') {
+    if (-not (Test-Path (Join-Path $PSScriptRoot $f))) { $problems += "Missing scripts\$f." }
+  }
+
+  # 3. Each Head repo and remote.
+  $remotes = git -C $BridgeRepo remote
+  foreach ($path in ($Targets | ForEach-Object { $_.HeadRepoPath } | Select-Object -Unique)) {
+    if (-not (Test-Path (Join-Path $path '.git'))) { $problems += "Head repo not found: $path"; continue }
+    if (-not (git -C $path rev-parse --verify -q refs/heads/main)) { $problems += "$path has no 'main' branch." }
+    $headBranch = git -C $path rev-parse --abbrev-ref HEAD
+    if ($headBranch -like 'export-*') { $problems += "$path has the export branch '$headBranch' checked out; the sync moves export branches, so switch it to 'main' first." }
+  }
+  foreach ($t in $Targets) {
+    if ($remotes -notcontains $t.RemoteName) { $problems += "Remote '$($t.RemoteName)' is not configured in this repo (run the setup script)." }
+  }
+
+  if ($problems) {
+    Write-Host '--- Preflight failed. Nothing was walked or changed: ---' -ForegroundColor Red
+    $problems | ForEach-Object { Write-Host "  * $_" }
+    throw 'Fix the items above, then re-run.'
+  }
+  Write-Host '--- Preflight OK (this repo clean, Head repos and remotes found) ---'
+}
+
 # Re-splits one target's Head subdirectory into its export branch and fetches it into this repo.
 # Shared by first-time setup and every later sync -- the split/fetch step is identical in both
 # cases, only the subtree command (add vs. pull) differs.
+#
+# Default: the persistent-cache split (scripts\git-subtree-persistent). Its commit-to-commit cache survives between
+# runs (in <Head>\.git\subtree-cache-persistent\<dir>) and each run only processes commits newer than the last
+# complete run, so cost tracks the new work and it can't recurse into old uncached history (which is what hung the
+# stock incremental split once Head merged new iteration commits). The first run on a machine is a full walk
+# (about 10 minutes per Head target); later runs take seconds to a minute. Makes no commit in Head.
+#
+# -Full: the stock git-subtree, full history walk every time (--ignore-joins), no cache. Slow and stateless; a
+# fallback only, e.g. if the persistent cache is ever suspect. (Deleting <Head>\.git\subtree-cache-persistent
+# resets the cache instead; also always safe.)
 function Sync-TargetSplit {
-  param([hashtable]$Target)
-  Write-Host "--- Splitting $($Target.Label) from $($Target.HeadRepoPath)\$($Target.SubdirInHead) ---"
+  param([hashtable]$Target, [switch]$Full)
+  Write-Host "--- Splitting $($Target.Label) from $($Target.HeadRepoPath)\$($Target.SubdirInHead)$(if ($Full) { ' (full history walk, no cache)' }) ---"
   Push-Location $Target.HeadRepoPath
-  # --rejoin leaves a "Split '<prefix>/' into commit '<sha>'" merge commit on whichever branch is
-  # currently checked out in Head; a later split with --rejoin finds that marker in history and only
-  # walks commits made since it, instead of the whole history every time (plain --onto does NOT do
-  # this on its own -- it only changes where the new commits attach, it still walks everything).
-  # The marker lands on whatever branch Head has checked out right now, so this refuses to run
-  # unless that is main -- do not run this sync against any other checked-out branch in Head.
-  $headBranch = git rev-parse --abbrev-ref HEAD
-  if ($headBranch -ne 'main') {
+  try {
+    if ($Full) {
+      $out = & git subtree split --prefix=$($Target.SubdirInHead) --ignore-joins main
+    } else {
+      $wrapper = ($PSScriptRoot -replace '\\', '/') + '/subtree-persistent.sh'
+      $out = & (Get-GitSh) $wrapper split --prefix=$($Target.SubdirInHead) --ignore-joins main
+    }
+    if ($LASTEXITCODE -ne 0) { throw "git subtree split failed for $($Target.Label) (exit $LASTEXITCODE)." }
+    $sha = $out | Where-Object { $_ -match '^[0-9a-f]{40}$' } | Select-Object -Last 1
+    if (-not $sha) { throw "git subtree split for $($Target.Label) did not print a commit id." }
+    git update-ref -m 'subtree split' "refs/heads/$($Target.ExportBranch)" $sha
+    if ($LASTEXITCODE -ne 0) { throw "Could not update branch $($Target.ExportBranch)." }
+  } finally {
     Pop-Location
-    throw "$($Target.HeadRepoPath) has '$headBranch' checked out, not 'main' -- switch Head to main before syncing, so the --rejoin marker commit lands on the right branch."
   }
-  # --rejoin creates a real commit on this checked-out branch, so Head's own working tree must
-  # pass the same clean-tree check as the bridge repo's -- including the same Windows CRLF false
-  # positive Assert-CleanWorkingTree below exists to clear.
-  git update-index -q --refresh | Out-Null
-  $headDirty = git status --porcelain
-  if ($headDirty) {
-    Pop-Location
-    Write-Host "--- $($Target.HeadRepoPath) has real uncommitted changes, cannot --rejoin: ---"
-    Write-Host $headDirty
-    throw "Head's working tree has uncommitted changes -- commit or discard them there, then re-run this script."
-  }
-  git subtree split --prefix=$($Target.SubdirInHead) --rejoin -b "$($Target.ExportBranch)-tmp" | Out-Null
-  git branch -f $Target.ExportBranch "$($Target.ExportBranch)-tmp"
-  git branch -D "$($Target.ExportBranch)-tmp" | Out-Null
-  Pop-Location
   git fetch $Target.RemoteName $Target.ExportBranch
 }
 
