@@ -61,7 +61,9 @@ export function renderPayEmbedHtml(): string {
   var amountCents = parseInt(params.get('amt') || '0', 10);
   var currency = (params.get('cur') || 'usd').toUpperCase();
   var isMock = params.get('mock') === '1' || clientSecret.indexOf('pi_mock_') === 0;
-  var linkMatch = location.pathname.match(/^\/pay\/([a-f0-9]{64})$/);
+  // Backslashes are doubled: this whole page is a template literal, where a bare backslash-slash would be emitted as / and turn
+  // this regex into a syntax error that silently kills the entire script (found 2026-10-11).
+  var linkMatch = location.pathname.match(/^\\/pay\\/([a-f0-9]{64})$/);
 
   var messageEl = document.getElementById('pay-message');
   function setMessage(text, tone) {
@@ -70,6 +72,11 @@ export function renderPayEmbedHtml(): string {
   }
   function notifyParent(status) {
     try { window.parent.postMessage({ type: 'solesystems-payment', status: status }, '*'); } catch (e) {}
+    // Opened as the top-level page of the desktop app's payment window: it reports by moving to /pay-embed/done,
+    // which the app intercepts. A hosted payment link (/pay/<id>) has no such window and stays put.
+    if (window.parent === window && location.pathname === '/pay-embed') {
+      setTimeout(function () { location.href = '/pay-embed/done?status=' + encodeURIComponent(status); }, 1500);
+    }
   }
 
   if (linkMatch) {

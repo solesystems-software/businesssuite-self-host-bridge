@@ -7,7 +7,8 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "schema:remote": "wrangler d1 execute businesssuite-payments-dev --remote --file=./schema.sql",
-    "test:local": "node test/run-local-e2e.mjs"
+    "test:local": "node test/run-local-e2e.mjs",
+    "test:page": "node --experimental-strip-types --test test/pay-embed-page.test.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20260702.1",
