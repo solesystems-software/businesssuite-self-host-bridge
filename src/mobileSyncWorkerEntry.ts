@@ -114,7 +114,7 @@ async function claimPairing(request: Request, env: Env, requestId: string) {
   // that claim landed (the INSERT's WHERE EXISTS re-checks it). A previously-revoked
   // row for the same (account, device) is replaced and un-revoked via ON CONFLICT, so
   // a device removed on the desktop stays re-pairable. If the batch fails, nothing
-  // commits — the session is not burned.
+  // commits â€” the session is not burned.
   const [claimResult] = await env.DB.batch([
     env.DB.prepare(`UPDATE mobile_sync_pairing_sessions SET claimed_at = ?, claimed_device_id = ?
       WHERE session_id = ? AND claimed_at IS NULL AND expires_at > ?`).bind(now, device, row.session_id, now),
@@ -151,7 +151,7 @@ async function uploadSnapshot(bodyText: string, auth: AuthenticatedRequest, env:
   if (existing) return existing.payload_hash === hash && existing.snapshot_version === version
     ? response({ ok: true, snapshot_id: id, snapshot_version: version, duplicate: true })
     : response({ ok: false, error: 'snapshot_conflict' }, 409, requestId)
-  // The uploader (desktop) can be behind the Worker — e.g. its local bookkeeping was reset
+  // The uploader (desktop) can be behind the Worker â€” e.g. its local bookkeeping was reset
   // to a baseline while the Worker kept the older snapshots it published earlier. Reject the
   // stale version cleanly and report the current server version so the desktop can adopt it
   // and publish the next one, instead of retrying the same version until the UNIQUE
@@ -167,7 +167,7 @@ async function uploadSnapshot(bodyText: string, auth: AuthenticatedRequest, env:
       (snapshot_id, account_sync_id, snapshot_version, payload_object_key, payload_hash, uploaded_by_credential_id, created_at, uploaded_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, auth.accountSyncId, version, key, hash, auth.credentialId, generated, new Date().toISOString()).run()
   } catch (error) {
-    // Lost a race for this version (or the constraint fired for another reason) — never a 500.
+    // Lost a race for this version (or the constraint fired for another reason) â€” never a 500.
     await env.PAYLOADS.delete(key)
     const raced = await env.DB.prepare('SELECT MAX(snapshot_version) AS current FROM mobile_sync_snapshots WHERE account_sync_id = ?')
       .bind(auth.accountSyncId).first<{ current: number | null }>()
@@ -245,7 +245,7 @@ function notifyAccountChannel(env: Env, ctx: ExecutionContext | undefined, accou
         body: JSON.stringify({ server_sequence: serverSequence }),
       })
     } catch {
-      // channel eviction race / no listeners — ignore
+      // channel eviction race / no listeners â€” ignore
     }
   })()
   if (ctx) ctx.waitUntil(poke)
@@ -517,11 +517,30 @@ async function acknowledge(packetId: string, bodyText: string, auth: Authenticat
     retained_backup_updated: retained, duplicate: Boolean(priorAck) })
 }
 
-async function acknowledgements(auth: AuthenticatedRequest, env: Env) {
-  const rows = await env.DB.prepare(`SELECT packet_id, ack_status AS status, reason_code, acknowledged_at
-    FROM mobile_sync_packet_acks WHERE account_sync_id = ? AND device_id = ? ORDER BY acknowledged_at ASC LIMIT 100`)
-    .bind(auth.accountSyncId, auth.identityId).all()
-  return response({ ok: true, acknowledgements: rows.results })
+const ACKNOWLEDGEMENT_PAGE_SIZE = 100
+
+// Without from_sequence (phones built before 2026-11-04) this returns the device's oldest 100
+// acknowledgements, so once a device has more than 100 the newest never reach it and those packets
+// stay "uploaded" forever. With from_sequence the phone pages forward from the oldest packet it is
+// still waiting on. The parameter sits outside the signed path, but it can only narrow the caller's
+// own acknowledgements.
+async function acknowledgements(auth: AuthenticatedRequest, env: Env, request: Request, requestId: string) {
+  const fromParameter = new URL(request.url).searchParams.get('from_sequence')
+  if (fromParameter === null) {
+    const rows = await env.DB.prepare(`SELECT packet_id, ack_status AS status, reason_code, acknowledged_at
+      FROM mobile_sync_packet_acks WHERE account_sync_id = ? AND device_id = ? ORDER BY acknowledged_at ASC LIMIT ${ACKNOWLEDGEMENT_PAGE_SIZE}`)
+      .bind(auth.accountSyncId, auth.identityId).all()
+    return response({ ok: true, acknowledgements: rows.results })
+  }
+  if (!/^\d{1,15}$/.test(fromParameter)) return response({ ok: false, error: 'invalid_request' }, 400, requestId)
+  const rows = await env.DB.prepare(`SELECT a.packet_id, a.ack_status AS status, a.reason_code, a.acknowledged_at, p.server_sequence
+    FROM mobile_sync_packet_acks a JOIN mobile_sync_packets p ON p.packet_id = a.packet_id
+    WHERE a.account_sync_id = ? AND a.device_id = ? AND p.server_sequence >= ?
+    ORDER BY p.server_sequence ASC LIMIT ${ACKNOWLEDGEMENT_PAGE_SIZE}`)
+    .bind(auth.accountSyncId, auth.identityId, Number(fromParameter)).all<{ server_sequence: number }>()
+  const last = rows.results[rows.results.length - 1]
+  return response({ ok: true, acknowledgements: rows.results,
+    next_from_sequence: rows.results.length === ACKNOWLEDGEMENT_PAGE_SIZE && last ? last.server_sequence + 1 : null })
 }
 
 async function listDevices(auth: AuthenticatedRequest, env: Env) {
@@ -635,7 +654,7 @@ export default {
       if (request.method === 'POST' && ack) return secured({ request, env, role: 'desktop', endpoint: 'packet_ack', requestId, started,
         handler: (auth, body) => acknowledge(ack[1], body, auth, env, requestId) })
       if (request.method === 'GET' && path === '/v1/acks') return secured({ request, env, role: 'mobile', endpoint: 'acks', requestId, started,
-        handler: auth => acknowledgements(auth, env) })
+        handler: auth => acknowledgements(auth, env, request, requestId) })
       if (request.method === 'GET' && path === '/v1/devices') return secured({ request, env, role: 'desktop', endpoint: 'devices_list', requestId, started,
         handler: auth => listDevices(auth, env) })
       const device = path.match(/^\/v1\/devices\/([A-Za-z0-9._:-]+)\/revoke$/)
