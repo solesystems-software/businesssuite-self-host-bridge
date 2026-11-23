@@ -165,7 +165,7 @@ async function ensureBusinessRow(env: Env, businessId: string) {
     .run()
 }
 
-// Authenticates a Business-originated binary request (upload-object only -- file bytes can't be hashed
+// Authenticates a Business-originated binary request (the object download route -- file bytes can't be hashed
 // as a JSON body). Same canonical-request shape as the JSON path, but the body hash covers the raw
 // bytes directly and there is no body.businessId field to cross-check.
 export async function authenticateBusinessBinaryRequest(

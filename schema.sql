@@ -38,9 +38,11 @@ CREATE INDEX IF NOT EXISTS idx_portal_clients_business
   ON portal_clients(business_id);
 
 -- One row per invite-link token (Part 0: invite link token is this build's only Client login mechanism).
--- portal_context_id is an opaque reference to whatever desktop-side context this grant is for (e.g. a
--- Sales Contract's parent Project Manager record) -- meaningful only to the desktop app, never
--- interpreted by the Worker.
+-- Since site publishing (D6) the desktop app generates the token and registers it through
+-- POST /business/register-portal (grant row here plus a portal_live_registrations companion row below);
+-- grants made by the retired publish path have a null expires_at and no companion row, so they are never
+-- live. portal_context_id is an opaque reference to whatever desktop-side context this grant is for --
+-- 'site-portal' for registered grants -- meaningful only to the desktop app, never interpreted by the Worker.
 CREATE TABLE IF NOT EXISTS portal_access_grants (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES portal_businesses(id),
@@ -55,23 +57,9 @@ CREATE TABLE IF NOT EXISTS portal_access_grants (
 CREATE INDEX IF NOT EXISTS idx_portal_access_grants_business
   ON portal_access_grants(business_id, client_id);
 
--- The current published snapshot for a grant -- overwritten on republish (source plan section 7.1: a
--- snapshot, not an append-only history). payload_json holds the job/context summary and the
--- FieldDefinition-positioned document reference(s) plus photo references the static portal shell (Phase
--- 3) renders directly; actual file bytes live in R2 (portal_file_objects), never inline here (Part 0's
--- 250KB snapshot payload cap).
-CREATE TABLE IF NOT EXISTS portal_snapshots_current (
-  id TEXT PRIMARY KEY,
-  business_id TEXT NOT NULL REFERENCES portal_businesses(id),
-  client_id TEXT NOT NULL REFERENCES portal_clients(id),
-  access_grant_id TEXT NOT NULL REFERENCES portal_access_grants(id),
-  payload_json TEXT NOT NULL,
-  published_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  expires_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_portal_snapshots_current_grant
-  ON portal_snapshots_current(access_grant_id);
+-- Site publishing (D7): the Worker no longer stores published content, so the former
+-- portal_snapshots_current table (and its index) is no longer created here. An already-deployed database
+-- keeps any leftover table untouched and unused; it can be dropped by hand.
 
 -- Client -> Business direction: a Client's submission (document_signing_response, photo_upload) awaiting
 -- the Business's own desktop-side review/import (Phase 5). Per source plan section 7.2's rule, nothing
@@ -141,7 +129,7 @@ CREATE TABLE IF NOT EXISTS portal_sync_receipts (
 CREATE INDEX IF NOT EXISTS idx_portal_sync_receipts_business
   ON portal_sync_receipts(business_id, packet_id);
 
--- Phase 7's retention/cleanup routine writes one row here per object/snapshot/packet it actually deletes
+-- Phase 7's retention/cleanup routine writes one row here per registration/grant/packet/object it actually deletes
 -- -- created in Phase 1 alongside every other table this phase's scope needs, per this document's own
 -- Part B Phase 1 instruction to create the full trimmed table list now.
 CREATE TABLE IF NOT EXISTS portal_cleanup_log (
@@ -197,3 +185,21 @@ VALUES (4, 'Cloudflare Self-Hosting Wave 2A: client_portal_worker_settings (self
 -- untouched and unused; they can be dropped by hand.
 INSERT OR IGNORE INTO portal_schema_versions (version, description)
 VALUES (6, 'Payments moved to its own Worker (cloudflare-payments); payment tables are no longer part of the Client Portal schema.');
+
+-- Site publishing (D6/D7), version 7: the live-token registry. A token is live only when its
+-- portal_access_grants row is unrevoked with a non-null future expires_at AND this companion row exists.
+-- Deploy Now re-applies this file on every install, so it must stay re-runnable: the registry is a
+-- companion table rather than an ALTER TABLE ADD COLUMN (SQLite has no IF NOT EXISTS for columns).
+-- allowed_refs_json holds opaque ids only (documentIds, estimateRefs, invoiceRefs), never content.
+-- The same statements alone are in schema-upgrade-0007-live-registry.sql for databases created before version 7.
+CREATE TABLE IF NOT EXISTS portal_live_registrations (
+  access_grant_id TEXT PRIMARY KEY REFERENCES portal_access_grants(id),
+  business_id TEXT NOT NULL,
+  allowed_origin TEXT NOT NULL,
+  allowed_refs_json TEXT NOT NULL DEFAULT '{}',
+  registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_portal_live_registrations_business ON portal_live_registrations(business_id);
+INSERT OR IGNORE INTO portal_schema_versions (version, description)
+VALUES (7, 'Site publishing (D6/D7): bridge only; portal_live_registrations is the live-token registry; no published content is stored.');

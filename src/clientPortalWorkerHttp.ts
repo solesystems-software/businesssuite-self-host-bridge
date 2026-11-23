@@ -9,16 +9,6 @@ const responseHeaders = {
   'X-Content-Type-Options': 'nosniff',
 }
 
-export function makeOptionsResponse() {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      Allow: 'GET, POST, OPTIONS',
-      'Cache-Control': 'no-store',
-    },
-  })
-}
-
 export function jsonResponse(
   status: number,
   body: JsonBody,

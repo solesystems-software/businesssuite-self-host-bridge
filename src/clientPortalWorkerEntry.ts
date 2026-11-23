@@ -2,39 +2,26 @@ import {
   handleAcknowledgePacket,
   handleDownloadBusinessObject,
   handleListPendingPackets,
-  handlePublishSnapshot,
+  handleRegisterPortal,
   handleRunCleanup,
-  handleUploadObject,
+  handleUnregisterPortal,
 } from './businessRoutes'
 import { runClientPortalCleanup } from './clientPortalCleanup'
+import { handleClientPortalRoute } from './clientPortalRoutes'
+import type { ClientPortalRoute } from './clientPortalRoutes'
 import {
-  handleGetPortalObject,
-  handleGetPortalSnapshot,
-  handleSubmitEstimateEvent,
-  handleSubmitInvoiceEvent,
-  handleSubmitPortalPacket,
-  handleUploadPortalPhoto,
-} from './clientPortalRoutes'
-import {
-  badRequest,
   internalServerError,
   jsonResponse,
-  makeOptionsResponse,
   methodNotAllowed,
   notFoundResponse,
 } from './clientPortalWorkerHttp'
-import { renderEmbedShellHtml } from './embedShellPage'
 import type { Env, PortalSchemaVersionRow } from './clientPortalWorkerTypes'
 
-const htmlResponseHeaders = {
-  'Content-Type': 'text/html; charset=utf-8',
-  'Cache-Control': 'no-store',
-  // Part B Phase 3: this page is designed to be embedded via <iframe> on an arbitrary Business's own
-  // website. Deliberately omits X-Frame-Options entirely (its absence means "no restriction" -- there is
-  // no valid "allow all origins" value for that header) and sets frame-ancestors * explicitly instead,
-  // the modern equivalent every current browser actually honors. The invite token itself, not the
-  // framing origin, is what gates access to the underlying data.
-  'Content-Security-Policy': "frame-ancestors *",
+const clientPortalRoutes: Record<string, ClientPortalRoute> = {
+  '/submit': 'submit',
+  '/upload': 'upload',
+  '/estimate-event': 'estimate-event',
+  '/invoice-event': 'invoice-event',
 }
 
 const serviceName = 'businesssuite-client-portal'
@@ -95,61 +82,34 @@ async function handleReadiness(request: Request, env: Env, requestId: string) {
   }
 }
 
-// Client_Portal_and_Contracts_Corrections_Task_Spec_20260823.md: public, unauthenticated oEmbed
-// endpoint (https://oembed.com/) so a bare pasted /embed/{inviteToken} URL auto-renders as an
-// embedded iframe in WordPress's block editor (and any other oEmbed-consuming embed tool), rather
-// than requiring the Business to hand-build an <iframe> snippet. Discovery is wired via the <link
-// rel="alternate" type="application/json+oembed"> tag embedShellPage.ts's renderEmbedShellHtml
-// renders into the /embed page's own <head>. Validates `url` against this relay's own /embed/{token}
-// pattern rather than reflecting an arbitrary caller-supplied URL into the response.
-function handleOembed(request: Request, url: URL, requestId: string) {
-  if (request.method !== 'GET') return methodNotAllowed(requestId)
-
-  const targetUrl = url.searchParams.get('url') || ''
-  const embedMatch = targetUrl.match(/^https?:\/\/[^/]+\/embed\/([a-f0-9]{64})\/?$/)
-  if (!embedMatch) return badRequest(requestId, "url must be one of this relay's own /embed/{inviteToken} links.")
-
-  const embedUrl = `${url.origin}/embed/${embedMatch[1]}`
-  return jsonResponse(200, {
-    type: 'rich',
-    version: '1.0',
-    provider_name: 'Sole Business Suite Client Portal',
-    html: `<iframe src="${embedUrl}" data-responsive="false" style="width:100%;height:800px;border:0;" loading="lazy"></iframe>`,
-    width: 800,
-    height: 800,
-  }, requestId)
-}
-
-// Route shapes: /business/* require HMAC auth (businessRoutes.ts); /portal/{inviteToken}[/*] are
-// Client-facing, token-authenticated only (clientPortalRoutes.ts) -- source plan sections 15.1-15.4.
+// Route shapes (bridge only): /business/* require HMAC auth (businessRoutes.ts); the four
+// /portal/{inviteToken}/<route> POST routes are Client-facing, token-authenticated only and CORS-bound to
+// the origin registered for the token (clientPortalRoutes.ts). The Worker serves no pages: every other
+// path, and OPTIONS on any other path, is the generic 404.
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const requestId = crypto.randomUUID()
 
     try {
-      if (request.method === 'OPTIONS') return makeOptionsResponse()
-
       const url = new URL(request.url)
       const pathname = normalizePath(url.pathname)
+
+      // OPTIONS exists only as the CORS preflight of the four Client routes (handled with the route, after the
+      // token lookup); on every other path it is the generic 404, not a blanket 204.
+      if (request.method === 'OPTIONS' && !/^\/portal\/[a-f0-9]{64}\/(submit|upload|estimate-event|invoice-event)$/.test(pathname)) {
+        return notFoundResponse(requestId)
+      }
 
       if (pathname === '/health') return handleHealth(request, env, requestId)
       if (pathname === '/readiness') return handleReadiness(request, env, requestId)
 
-      const embedMatch = pathname.match(/^\/embed\/([a-f0-9]{64})$/)
-      if (embedMatch) {
-        if (request.method !== 'GET') return methodNotAllowed(requestId)
-        return new Response(renderEmbedShellHtml(embedMatch[1], url.origin), { status: 200, headers: htmlResponseHeaders })
-      }
-
-      if (pathname === '/oembed') return handleOembed(request, url, requestId)
-
-      if (pathname === '/business/publish-snapshot') {
+      if (pathname === '/business/register-portal') {
         if (request.method !== 'POST') return methodNotAllowed(requestId)
-        return handlePublishSnapshot(request, env, requestId)
+        return handleRegisterPortal(request, env, requestId)
       }
-      if (pathname === '/business/upload-object') {
+      if (pathname === '/business/unregister-portal') {
         if (request.method !== 'POST') return methodNotAllowed(requestId)
-        return handleUploadObject(request, env, requestId)
+        return handleUnregisterPortal(request, env, requestId)
       }
       if (pathname === '/business/pending-packets') {
         if (request.method !== 'POST') return methodNotAllowed(requestId)
@@ -175,31 +135,8 @@ export default {
         const inviteToken = portalMatch[1]
         const subPath = portalMatch[2] || ''
 
-        if (subPath === '') {
-          if (request.method !== 'GET') return methodNotAllowed(requestId)
-          return handleGetPortalSnapshot(env, requestId, inviteToken)
-        }
-        if (subPath === '/submit') {
-          if (request.method !== 'POST') return methodNotAllowed(requestId)
-          return handleSubmitPortalPacket(request, env, requestId, inviteToken)
-        }
-        if (subPath === '/upload') {
-          if (request.method !== 'POST') return methodNotAllowed(requestId)
-          return handleUploadPortalPhoto(request, env, requestId, inviteToken)
-        }
-        if (subPath === '/estimate-event') {
-          if (request.method !== 'POST') return methodNotAllowed(requestId)
-          return handleSubmitEstimateEvent(request, env, requestId, inviteToken)
-        }
-        if (subPath === '/invoice-event') {
-          if (request.method !== 'POST') return methodNotAllowed(requestId)
-          return handleSubmitInvoiceEvent(request, env, requestId, inviteToken)
-        }
-        const objectMatch = subPath.match(/^\/objects\/([0-9a-f-]{36})$/)
-        if (objectMatch) {
-          if (request.method !== 'GET') return methodNotAllowed(requestId)
-          return handleGetPortalObject(request, env, requestId, inviteToken, objectMatch[1])
-        }
+        const route = Object.hasOwn(clientPortalRoutes, subPath) ? clientPortalRoutes[subPath] : undefined
+        if (route) return handleClientPortalRoute(request, env, requestId, inviteToken, route)
       }
 
       return notFoundResponse(requestId)

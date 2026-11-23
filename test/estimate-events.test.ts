@@ -3,7 +3,7 @@
 //
 // Two layers, matching this project's "real, not stubbed" discipline while honouring the batch
 // constraint "Do NOT wrangler deploy / isolated local worker tests only":
-//   1. Pure validation contract (parseEstimateEventBody / estimateRefMatchesSnapshot) -- always
+//   1. Pure validation contract (parseEstimateEventBody / estimateRefIsAllowed) -- always
 //      runs, no credentials, no network. These are the substantive branching decisions the route
 //      makes; clientPortalRoutes.ts's handleSubmitEstimateEvent is thin glue over them plus the
 //      same grant-lookup / D1-insert pattern the already-covered handleSubmitPortalPacket uses.
@@ -15,7 +15,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parseEstimateEventBody, estimateRefMatchesSnapshot, ESTIMATE_EVENTS } from '../src/estimateEventValidation.ts'
+import { parseEstimateEventBody, estimateRefIsAllowed, ESTIMATE_EVENTS } from '../src/estimateEventValidation.ts'
 
 test('parseEstimateEventBody accepts each valid event with a non-empty estimateRef', () => {
   for (const event of ESTIMATE_EVENTS) {
@@ -53,19 +53,16 @@ test('parseEstimateEventBody rejects non-object bodies', () => {
   assert.equal(parseEstimateEventBody(['viewed']).ok, false)
 })
 
-test('estimateRefMatchesSnapshot matches only the published estimate ref', () => {
-  const snapshot = JSON.stringify({ title: 'Job', estimate: { estimateRef: 'est-777', bodyHtml: '<div></div>' } })
-  assert.equal(estimateRefMatchesSnapshot(snapshot, 'est-777'), true)
-  assert.equal(estimateRefMatchesSnapshot(snapshot, 'est-778'), false)
+test('estimateRefIsAllowed accepts only a registered estimate ref', () => {
+  const allowed = ['est-777', 'est-900']
+  assert.equal(estimateRefIsAllowed(allowed, 'est-777'), true)
+  assert.equal(estimateRefIsAllowed(allowed, 'est-900'), true)
+  assert.equal(estimateRefIsAllowed(allowed, 'est-778'), false)
 })
 
-test('estimateRefMatchesSnapshot rejects a snapshot with no published estimate', () => {
-  assert.equal(estimateRefMatchesSnapshot(JSON.stringify({ title: 'Job', estimate: null }), 'est-1'), false)
-  assert.equal(estimateRefMatchesSnapshot(JSON.stringify({ title: 'Job' }), 'est-1'), false)
-})
-
-test('estimateRefMatchesSnapshot tolerates a corrupt payload', () => {
-  assert.equal(estimateRefMatchesSnapshot('{not json', 'est-1'), false)
+test('estimateRefIsAllowed rejects every ref when none is registered or the ref is empty', () => {
+  assert.equal(estimateRefIsAllowed([], 'est-1'), false)
+  assert.equal(estimateRefIsAllowed(['est-1'], ''), false)
 })
 
 // --- Layer 2: live route integration (skips until deployed + credentialed) ---

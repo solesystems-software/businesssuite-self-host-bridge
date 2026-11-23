@@ -1,7 +1,8 @@
-// Client_Portal_Mode_CR_Task_Spec_20260822.md Part B Phase 7: a real, live smoke test confirming
+// Client_Portal_Mode_CR_Task_Spec_20260822.md Part B Phase 7, updated for the bridge-only Worker
+// (Client_Portal_Site_Publishing_Task_Spec_20261112.md, D16): a real, live smoke test confirming
 // POST /business/run-cleanup actually executes against the deployed dev Worker and returns real
-// counts (not that anything is necessarily expired right now -- this dev database has nothing old
-// enough yet -- just that the routine runs end to end without error and the response shape is real).
+// counts (not that anything is necessarily expired right now -- just that the routine runs end to end
+// without error and the response has the bridge-only shape). Skips without the live credentials.
 // Run with: node --test test/cleanup-smoke.test.mjs
 
 import test from 'node:test'
@@ -38,8 +39,10 @@ test('Client Portal Phase 7: POST /business/run-cleanup runs and returns real co
   const json = await response.json()
   assert.equal(response.status, 200, `run-cleanup failed: ${JSON.stringify(json)}`)
   assert.equal(json.ok, true)
-  assert.equal(typeof json.deletedSnapshots, 'number')
+  assert.equal(typeof json.deletedRegistrations, 'number')
+  assert.equal(typeof json.deletedGrants, 'number')
   assert.equal(typeof json.deletedAcknowledgedPackets, 'number')
   assert.equal(typeof json.deletedExpiredPendingPackets, 'number')
   assert.equal(typeof json.deletedFileObjects, 'number')
+  assert.equal('deletedSnapshots' in json, false, 'snapshots no longer exist')
 })
