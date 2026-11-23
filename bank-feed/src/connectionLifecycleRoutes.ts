@@ -315,10 +315,19 @@ export async function handleDisconnectPlaidConnection(
     )
     const disconnectedAt = new Date().toISOString()
 
+    // Codes meaning the Item is already unusable at Plaid: there is nothing left to remove there, and the
+    // local row must still be released or the connection can never be disconnected.
+    const alreadyRemovedAtPlaid = new Set(['ITEM_NOT_FOUND', 'INVALID_ACCESS_TOKEN', 'ITEM_NO_LONGER_AVAILABLE'])
+
     if (connection.connectionStatus !== 'disconnected') {
       if (connection.connectionStatus !== 'revoked') {
         const accessToken = await decryptConnectionAccessToken(env, connection)
-        await removePlaidItem(env, { access_token: accessToken })
+        try {
+          await removePlaidItem(env, { access_token: accessToken })
+        } catch (error) {
+          if (!(error instanceof PlaidApiError) || !alreadyRemovedAtPlaid.has(error.errorCode || '')) throw error
+          console.error(`Plaid Item already removed (${error.errorCode}); releasing connection ${connectionId} locally.`)
+        }
       }
       await markPlaidConnectionDisconnected(
         env,

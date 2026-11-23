@@ -122,7 +122,20 @@ async function deleteWebhookEndpoint(env: Env, row: StripeBankFeedKeyRow) {
       headers: stripeAuthHeaders(secretKey),
     })
   } catch (error) {
-    console.error('Stripe webhook endpoint cleanup failed (continuing):', error instanceof Error ? error.message : 'unknown error')
+    console.error(`Stripe webhook endpoint ${row.webhook_endpoint_id} cleanup failed (continuing):`, error instanceof Error ? error.message : 'unknown error')
+  }
+}
+
+// Best effort: removes an endpoint this request just registered, after the local row write failed. Never throws,
+// so the caller can rethrow the original write error. The endpoint id is logged; no key or secret is.
+async function deleteNewWebhookEndpoint(env: Env, secretKey: string, endpointId: string) {
+  try {
+    await fetch(`${stripeApiBase(env)}/webhook_endpoints/${encodeURIComponent(endpointId)}`, {
+      method: 'DELETE',
+      headers: stripeAuthHeaders(secretKey),
+    })
+  } catch (error) {
+    console.error(`Stripe webhook endpoint ${endpointId} left orphaned after a failed key save (manual cleanup needed):`, error instanceof Error ? error.message : 'unknown error')
   }
 }
 
@@ -175,8 +188,8 @@ export async function handleStripeSaveKey(request: Request, env: Env, requestId:
       return badRequest(requestId, 'Stripe reports a different live/test mode than this key\'s prefix. Check the key.')
     }
 
-    if (existing) await deleteWebhookEndpoint(env, existing)
-
+    // The old endpoint is deleted only after the replacement is registered and saved (below), so a failed
+    // registration leaves the account with a live webhook.
     const webhookUrl = `${new URL(request.url).origin}/stripe/webhooks/${encodeURIComponent(accountIntegrationId)}`
     const endpointBody = new URLSearchParams()
     endpointBody.set('url', webhookUrl)
@@ -206,37 +219,55 @@ export async function handleStripeSaveKey(request: Request, env: Env, requestId:
     : null
   const timestamp = nowIso()
 
-  await env.DB
-    .prepare(`
-      INSERT INTO stripe_bank_feed_keys
-        (account_integration_id, encrypted_secret_key, secret_key_iv, secret_key_version, key_kind, publishable_key, livemode,
-         webhook_endpoint_id, encrypted_webhook_secret, webhook_secret_iv, webhook_secret_version, customer_id,
-         last_verified_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-      ON CONFLICT (account_integration_id) DO UPDATE SET
-        encrypted_secret_key = excluded.encrypted_secret_key,
-        secret_key_iv = excluded.secret_key_iv,
-        secret_key_version = excluded.secret_key_version,
-        key_kind = excluded.key_kind,
-        publishable_key = excluded.publishable_key,
-        livemode = excluded.livemode,
-        webhook_endpoint_id = excluded.webhook_endpoint_id,
-        encrypted_webhook_secret = excluded.encrypted_webhook_secret,
-        webhook_secret_iv = excluded.webhook_secret_iv,
-        webhook_secret_version = excluded.webhook_secret_version,
-        customer_id = NULL,
-        last_verified_at = excluded.last_verified_at,
-        updated_at = excluded.updated_at
-    `)
-    .bind(
-      accountIntegrationId,
-      encryptedKey.ciphertext, encryptedKey.iv, encryptedKey.version,
-      keyKind, publishableKey, keyLivemode ? 1 : 0,
-      webhookEndpointId,
-      encryptedWebhook?.ciphertext ?? null, encryptedWebhook?.iv ?? null, encryptedWebhook?.version ?? null,
-      timestamp, timestamp, timestamp,
-    )
-    .run()
+  try {
+    await env.DB
+      .prepare(`
+        INSERT INTO stripe_bank_feed_keys
+          (account_integration_id, encrypted_secret_key, secret_key_iv, secret_key_version, key_kind, publishable_key, livemode,
+           webhook_endpoint_id, encrypted_webhook_secret, webhook_secret_iv, webhook_secret_version, customer_id,
+           last_verified_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        ON CONFLICT (account_integration_id) DO UPDATE SET
+          encrypted_secret_key = excluded.encrypted_secret_key,
+          secret_key_iv = excluded.secret_key_iv,
+          secret_key_version = excluded.secret_key_version,
+          key_kind = excluded.key_kind,
+          publishable_key = excluded.publishable_key,
+          livemode = excluded.livemode,
+          webhook_endpoint_id = excluded.webhook_endpoint_id,
+          encrypted_webhook_secret = excluded.encrypted_webhook_secret,
+          webhook_secret_iv = excluded.webhook_secret_iv,
+          webhook_secret_version = excluded.webhook_secret_version,
+          customer_id = NULL,
+          last_verified_at = excluded.last_verified_at,
+          updated_at = excluded.updated_at
+      `)
+      .bind(
+        accountIntegrationId,
+        encryptedKey.ciphertext, encryptedKey.iv, encryptedKey.version,
+        keyKind, publishableKey, keyLivemode ? 1 : 0,
+        webhookEndpointId,
+        encryptedWebhook?.ciphertext ?? null, encryptedWebhook?.iv ?? null, encryptedWebhook?.version ?? null,
+        timestamp, timestamp, timestamp,
+      )
+      .run()
+  } catch (error) {
+    // The row was not rewritten, so the old key and old endpoint still stand. Remove the endpoint registered above
+    // so it does not linger on the account's Stripe side, then surface the original failure.
+    if (webhookEndpointId) await deleteNewWebhookEndpoint(env, secretKey, webhookEndpointId)
+    throw error
+  }
+
+  // Only now, with the new endpoint registered and the row rewritten, remove the endpoint the old key owned
+  // (best effort). Deleting it first left Stripe with no endpoint whenever the new registration failed.
+  // No sweep table exists for endpoints that fail to delete here, so the id is logged for manual cleanup.
+  if (existing && existing.webhook_endpoint_id && existing.webhook_endpoint_id !== webhookEndpointId) {
+    try {
+      await deleteWebhookEndpoint(env, existing)
+    } catch (error) {
+      console.error(`Stripe webhook endpoint ${existing.webhook_endpoint_id} was not removed after key replacement:`, error instanceof Error ? error.message : 'unknown error')
+    }
+  }
 
   const saved = await getStripeBankFeedKeyRow(env, accountIntegrationId) as StripeBankFeedKeyRow
   return jsonResponse(200, { ok: true, requestId, provider: 'stripe', connection: mapConnection(saved), mock }, requestId)
