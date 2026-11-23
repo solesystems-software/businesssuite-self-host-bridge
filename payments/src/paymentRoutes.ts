@@ -87,6 +87,9 @@ async function createRealStripePaymentIntent(
   body.set('amount', String(amountCents))
   body.set('currency', currency)
   body.set('automatic_payment_methods[enabled]', 'true')
+  // Only methods that complete in the embedded page: a redirect method would send the payer back to /pay-embed
+  // with the result in the query string, which the page (fragment-only by design) cannot show.
+  body.set('automatic_payment_methods[allow_redirects]', 'never')
   body.set('metadata[invoice_ref]', invoiceRef)
   body.set('metadata[method]', method)
   body.set('description', `Invoice ${invoiceRef}`)
