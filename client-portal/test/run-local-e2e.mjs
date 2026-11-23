@@ -1,9 +1,10 @@
-// Local integration coverage for the Client Portal Worker: apply the real schema to a scratch local D1 (via
-// `wrangler d1 execute --local`), boot a real `wrangler dev` instance against that state, bootstrap the
-// self-generated publish signing secret, and drive publish over actual HTTP with node:test. Client Portal has no
-// licensing role (Galen, 2026-09-30), so the Worker is started with no licensing configuration at all and publish
-// must still work. The other test/*.test.mjs files still hit the live *deployed* dev Worker and skip when the local
-// development override file is absent.
+// Local integration coverage for the bridge-only Client Portal Worker: apply the real schema to a scratch local D1
+// (via `wrangler d1 execute --local`), boot a real `wrangler dev` instance against that state, bootstrap the
+// self-generated signing secret, and drive the registry, the four Client routes, CORS, ack-and-delete and the
+// cleanup sweep over actual HTTP with node:test (test/bridge-only.test.mjs). Client Portal has no licensing role
+// (Galen, 2026-09-30), so the Worker is started with no licensing configuration at all. The other
+// test/*.test.mjs files that need credentials (hardening, cleanup-smoke) hit the live *deployed* dev Worker and
+// skip when the local development override file is absent.
 // `--compatibility-date 2026-07-06` is passed to the local `wrangler dev` invocation only -- it pins the local dev
 // runtime to a date the bundled workerd supports; wrangler.toml itself is untouched, so real deploys are unaffected.
 //
@@ -83,7 +84,7 @@ async function stopWorker(worker) {
 }
 
 // Bootstraps the self-generated publish signing secret by sending one throwaway, deliberately
-// wrongly-signed publish request (still header/body-shape-valid, so it reaches the point in
+// wrongly-signed register-portal request (still header/body-shape-valid, so it reaches the point in
 // authenticateBusinessJsonRequest that calls getOrCreatePublishSigningSecretBase64 before the
 // signature comparison even happens), then reads the now-persisted secret straight out of local D1.
 // This is the only way a test client can ever learn a self-bootstrapped secret's value -- exactly the
@@ -92,7 +93,7 @@ async function stopWorker(worker) {
 // here) to learn it instead of reading D1 directly.
 async function bootstrapAndReadPublishSigningSecret(baseUrl, statePath, businessId) {
   const dummySignature = randomBytes(32).toString('base64url')
-  await fetch(`${baseUrl}/business/publish-snapshot`, {
+  await fetch(`${baseUrl}/business/register-portal`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -101,7 +102,7 @@ async function bootstrapAndReadPublishSigningSecret(baseUrl, statePath, business
       'X-SoleSystems-Nonce': randomUUID().replace(/-/g, ''),
       'X-SoleSystems-Signature': dummySignature,
     },
-    body: JSON.stringify({ businessId, clientId: 'bootstrap-trigger-client', portalContextId: 'bootstrap-trigger', snapshot: { title: 'bootstrap trigger' } }),
+    body: JSON.stringify({ businessId, inviteToken: 'b'.repeat(64), clientId: 'bootstrap-trigger-client', expiresAt: new Date(Date.now() + 86400000).toISOString(), allowedOrigin: 'https://bootstrap.example.com', allowedRefs: {} }),
   })
 
   const row = await querySqlFirst(statePath,
@@ -122,15 +123,18 @@ try {
     const port = 8799
     worker = await startWorker({ port, statePath })
     const baseUrl = `http://127.0.0.1:${port}`
-    const businessId = `publish-without-licensing-${randomUUID()}`
+    const businessId = `bridge-only-${randomUUID()}`
     const secretBase64 = await bootstrapAndReadPublishSigningSecret(baseUrl, statePath, businessId)
 
-    await run(process.execPath, ['test/publish-without-licensing.test.mjs'], {
+    await run(process.execPath, ['--test', '--test-timeout=240000', 'test/bridge-only.test.mjs'], {
       env: {
         ...safeEnvironment,
         WAVE2A_BASE_URL: baseUrl,
         WAVE2A_BUSINESS_ID: businessId,
         WAVE2A_SIGNING_SECRET_B64: secretBase64,
+        WAVE2A_STATE_PATH: statePath,
+        WAVE2A_WRANGLER: wrangler,
+        WAVE2A_DATABASE_NAME: databaseName,
       },
       stdio: 'inherit',
     })

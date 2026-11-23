@@ -1,7 +1,7 @@
 // Notifications_..._7Phase_Plan Part C-2 / C-5 (Orchestration BS-2): pure validation for the
 // Client-facing estimate-event beacon (POST /portal/{inviteToken}/estimate-event). Extracted so it
 // has a dependency-free `node --test` surface (test/estimate-events.test.ts) -- the route in
-// clientPortalRoutes.ts is thin glue over this plus the snapshot-ref check and the D1 insert.
+// clientPortalRoutes.ts is thin glue over this plus the registered-ref check and the D1 insert.
 
 export type EstimateEvent = 'viewed' | 'accepted' | 'declined'
 
@@ -24,16 +24,9 @@ export function parseEstimateEventBody(body: unknown): ParsedEstimateEventBody {
   return { ok: true, estimateRef, event: event as EstimateEvent }
 }
 
-// The published snapshot's estimate ref must match the ref the Client claims -- a mismatched ref is
-// rejected here, never forwarded to the Business's inbox.
-export function estimateRefMatchesSnapshot(snapshotPayloadJson: string, estimateRef: string): boolean {
-  try {
-    const payload = JSON.parse(snapshotPayloadJson) as { estimate?: { estimateRef?: unknown } | null }
-    const publishedRef = payload.estimate && typeof payload.estimate.estimateRef === 'string'
-      ? payload.estimate.estimateRef
-      : ''
-    return Boolean(publishedRef) && publishedRef === estimateRef
-  } catch {
-    return false
-  }
+// The Worker holds no published content, so the Client's claimed ref is checked against the opaque ids the
+// Business registered for this token (allowedRefs.estimateRefs) -- a ref that is not in the list is rejected
+// here, never forwarded to the Business's inbox.
+export function estimateRefIsAllowed(allowedEstimateRefs: readonly string[], estimateRef: string): boolean {
+  return Boolean(estimateRef) && allowedEstimateRefs.includes(estimateRef)
 }

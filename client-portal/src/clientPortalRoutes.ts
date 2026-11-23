@@ -1,17 +1,22 @@
 import {
   badRequest,
   jsonResponse,
+  methodNotAllowed,
   notFoundResponse,
   payloadTooLarge,
 } from './clientPortalWorkerHttp'
-import { estimateRefMatchesSnapshot, parseEstimateEventBody } from './estimateEventValidation'
-import { invoiceRefMatchesSnapshot, parseInvoiceEventBody } from './invoiceEventValidation'
-import type { Env, PortalAccessGrantRow, PortalSnapshotRow } from './clientPortalWorkerTypes'
+import { estimateRefIsAllowed, parseEstimateEventBody } from './estimateEventValidation'
+import { invoiceRefIsAllowed, parseInvoiceEventBody } from './invoiceEventValidation'
+import type { AllowedRefs } from './portalRegistryValidation'
+import type { Env, PortalAccessGrantRow } from './clientPortalWorkerTypes'
 
-// Client_Portal_Mode_CR_Task_Spec_20260822.md Part B Phase 1/4: Client-facing endpoints, authenticated by
-// invite-link token only (Part 0's locked Client login mechanism -- no accounts, no email codes). Every
-// row this reads or writes is scoped through the token's own access_grant_id, never a client-supplied
-// business_id/client_id -- Part B Phase 8's tenant-isolation requirement designed in from the start.
+// Client_Portal_Site_Publishing_Task_Spec_20261112.md (D5, D6, D7, D14): the Worker is a bridge only. It
+// serves no pages and holds no published content; the Business's own site hosts the portal page, and that
+// page calls the four POST routes below. Every route is authenticated by the invite-link token alone, and a
+// token is live only while the Business has it registered (portal_live_registrations, written by
+// POST /business/register-portal): grant present, not revoked, expires_at set and in the future, companion
+// row present. Every row this reads or writes is scoped through the token's own access_grant_id, never a
+// client-supplied business_id/client_id -- Part B Phase 8's tenant-isolation requirement.
 
 // Correction (2026-08-24): raised from 10MB -- real phone-camera JPEGs routinely exceed that,
 // while the small PNGs used in this project's own dev/test data stayed comfortably under it, which
@@ -23,84 +28,129 @@ const maximumUploadBytes = 25 * 1024 * 1024 // Part 0 (corrected 2026-08-24): si
 const pendingPerClientBytes = 125 * 1024 * 1024 // Part 0 (corrected 2026-08-24): 125MB pending per Client.
 const pendingPerBusinessBytes = 1024 * 1024 * 1024 // Part 0: 1GB pending per Business.
 
-async function requireActiveGrant(env: Env, inviteToken: string): Promise<PortalAccessGrantRow | null> {
+const documentSigningResponsePacketType = 'document_signing_response'
+
+export type ClientPortalRoute = 'submit' | 'upload' | 'estimate-event' | 'invoice-event'
+
+export type LiveRegistration = {
+  grant: PortalAccessGrantRow
+  allowedOrigin: string
+  allowedRefs: AllowedRefs
+}
+
+type LiveRegistrationRow = PortalAccessGrantRow & {
+  allowed_origin: string
+  allowed_refs_json: string
+}
+
+function parseStoredRefs(refsJson: string): AllowedRefs {
+  const empty: AllowedRefs = { documentIds: [], estimateRefs: [], invoiceRefs: [] }
+  try {
+    const parsed = JSON.parse(refsJson) as Partial<Record<keyof AllowedRefs, unknown>> | null
+    if (!parsed || typeof parsed !== 'object') return empty
+    const list = (value: unknown) => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [])
+    return { documentIds: list(parsed.documentIds), estimateRefs: list(parsed.estimateRefs), invoiceRefs: list(parsed.invoiceRefs) }
+  } catch {
+    return empty
+  }
+}
+
+// A token is live only when its grant exists, is not revoked, has a non-null expires_at in the future, and has a
+// companion portal_live_registrations row. Grants made by the retired publish path have no companion row
+// (and a null expires_at), so they are never live.
+async function findLiveRegistration(env: Env, inviteToken: string): Promise<LiveRegistration | null> {
   if (!/^[a-f0-9]{64}$/.test(inviteToken)) return null
 
-  const grant = await env.DB
+  const row = await env.DB
     .prepare(`
-      SELECT id, business_id, client_id, portal_context_id, invite_token, created_at, expires_at, revoked_at
-      FROM portal_access_grants
-      WHERE invite_token = ?
+      SELECT g.id, g.business_id, g.client_id, g.portal_context_id, g.invite_token, g.created_at, g.expires_at, g.revoked_at,
+             r.allowed_origin, r.allowed_refs_json
+      FROM portal_access_grants g
+      JOIN portal_live_registrations r ON r.access_grant_id = g.id
+      WHERE g.invite_token = ?
     `)
     .bind(inviteToken)
-    .first<PortalAccessGrantRow>()
+    .first<LiveRegistrationRow>()
 
-  if (!grant) return null
-  if (grant.revoked_at) return null
-  if (grant.expires_at && Date.parse(grant.expires_at) <= Date.now()) return null
-  return grant
+  if (!row) return null
+  if (row.revoked_at) return null
+  if (!row.expires_at || Date.parse(row.expires_at) <= Date.now()) return null
+
+  const { allowed_origin: allowedOrigin, allowed_refs_json: allowedRefsJson, ...grant } = row
+  return { grant, allowedOrigin, allowedRefs: parseStoredRefs(allowedRefsJson) }
 }
 
-export async function handleGetPortalSnapshot(env: Env, requestId: string, inviteToken: string): Promise<Response> {
-  const grant = await requireActiveGrant(env, inviteToken)
-  if (!grant) return notFoundResponse(requestId, 'This invite link is invalid, expired, or has been revoked.')
-
-  const snapshot = await env.DB
-    .prepare(`
-      SELECT id, business_id, client_id, access_grant_id, payload_json, published_at, expires_at
-      FROM portal_snapshots_current
-      WHERE access_grant_id = ?
-    `)
-    .bind(grant.id)
-    .first<PortalSnapshotRow>()
-
-  if (!snapshot) return notFoundResponse(requestId, 'Nothing has been published to this invite link yet.')
-  if (Date.parse(snapshot.expires_at) <= Date.now()) {
-    return notFoundResponse(requestId, 'This published snapshot has expired.')
+// CORS (D14). The Worker answers a browser only when the request Origin is EXACTLY the origin the Business
+// registered for this token: never "*", never a reflected arbitrary Origin. Every response for a live token
+// carries Vary: Origin so a shared cache cannot hand one origin's answer to another. Non-browser clients
+// ignore CORS entirely; they are bounded by the 256-bit token and the registration only.
+function applyClientCors(response: Response, registration: LiveRegistration, requestOrigin: string | null) {
+  response.headers.set('Vary', 'Origin')
+  if (requestOrigin !== null && requestOrigin === registration.allowedOrigin) {
+    response.headers.set('Access-Control-Allow-Origin', registration.allowedOrigin)
   }
-
-  return jsonResponse(200, {
-    ok: true,
-    requestId,
-    snapshot: JSON.parse(snapshot.payload_json),
-    publishedAt: snapshot.published_at,
-    expiresAt: snapshot.expires_at,
-  }, requestId)
+  return response
 }
 
-export async function handleGetPortalObject(request: Request, env: Env, requestId: string, inviteToken: string, objectId: string): Promise<Response> {
-  const grant = await requireActiveGrant(env, inviteToken)
-  if (!grant) return notFoundResponse(requestId, 'This invite link is invalid, expired, or has been revoked.')
-
-  const object = await env.DB
-    .prepare(`
-      SELECT r2_object_key, content_type, byte_size, expires_at
-      FROM portal_file_objects
-      WHERE id = ? AND business_id = ? AND client_id = ?
-    `)
-    .bind(objectId, grant.business_id, grant.client_id)
-    .first<{ r2_object_key: string; content_type: string; byte_size: number; expires_at: string }>()
-
-  if (!object) return notFoundResponse(requestId, 'Object not found for this invite link.')
-  if (Date.parse(object.expires_at) <= Date.now()) return notFoundResponse(requestId, 'This object has expired.')
-
-  const stored = await env.FILES.get(object.r2_object_key)
-  if (!stored) return notFoundResponse(requestId, 'Object not found in storage.')
-
-  void request
-  return new Response(stored.body, {
-    status: 200,
+function preflightResponse(requestId: string, registration: LiveRegistration, requestOrigin: string | null) {
+  if (requestOrigin === null || requestOrigin !== registration.allowedOrigin) {
+    return new Response(null, {
+      status: 403,
+      headers: { 'Cache-Control': 'no-store', Vary: 'Origin', 'X-Request-Id': requestId },
+    })
+  }
+  return new Response(null, {
+    status: 204,
     headers: {
-      'Content-Type': object.content_type,
-      'Cache-Control': 'private, max-age=300',
-      'Content-Length': String(object.byte_size),
+      'Access-Control-Allow-Origin': registration.allowedOrigin,
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-SoleSystems-Content-Type',
+      'Access-Control-Max-Age': '600',
+      'Cache-Control': 'no-store',
+      Vary: 'Origin',
+      'X-Request-Id': requestId,
     },
   })
 }
 
-export async function handleSubmitPortalPacket(request: Request, env: Env, requestId: string, inviteToken: string): Promise<Response> {
-  const grant = await requireActiveGrant(env, inviteToken)
-  if (!grant) return notFoundResponse(requestId, 'This invite link is invalid, expired, or has been revoked.')
+// One entry for the four Client routes. Not live (unknown, unregistered, revoked, expired, legacy grant) is
+// the generic 404 with no CORS headers for every method; a live token gets the preflight, the POST handler,
+// or a 405, each carrying Vary: Origin.
+export async function handleClientPortalRoute(
+  request: Request,
+  env: Env,
+  requestId: string,
+  inviteToken: string,
+  route: ClientPortalRoute,
+): Promise<Response> {
+  const registration = await findLiveRegistration(env, inviteToken)
+  if (!registration) return notFoundResponse(requestId)
+
+  const requestOrigin = request.headers.get('origin')
+
+  if (request.method === 'OPTIONS') return preflightResponse(requestId, registration, requestOrigin)
+  if (request.method !== 'POST') return applyClientCors(methodNotAllowed(requestId), registration, requestOrigin)
+
+  let response: Response
+  switch (route) {
+    case 'submit':
+      response = await submitPortalPacket(request, env, requestId, registration)
+      break
+    case 'upload':
+      response = await uploadPortalPhoto(request, env, requestId, registration)
+      break
+    case 'estimate-event':
+      response = await submitEstimateEvent(request, env, requestId, registration)
+      break
+    default:
+      response = await submitInvoiceEvent(request, env, requestId, registration)
+      break
+  }
+  return applyClientCors(response, registration, requestOrigin)
+}
+
+async function submitPortalPacket(request: Request, env: Env, requestId: string, registration: LiveRegistration): Promise<Response> {
+  const { grant, allowedRefs } = registration
 
   const contentType = request.headers.get('content-type') || ''
   if (!contentType.toLowerCase().includes('application/json')) {
@@ -118,18 +168,29 @@ export async function handleSubmitPortalPacket(request: Request, env: Env, reque
 
   const packetType = body.packetType
   const payload = body.payload
-  if (typeof packetType !== 'string' || !packetType.trim() || !payload || typeof payload !== 'object') {
+  if (typeof packetType !== 'string' || !packetType.trim() || !payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return badRequest(requestId, 'packetType and payload are required.')
+  }
+
+  // The site-hosted page can only send a signed-document response; every other packet type is Worker-made.
+  if (packetType.trim() !== documentSigningResponsePacketType) {
+    return badRequest(requestId, 'packetType must be document_signing_response.')
+  }
+
+  const documentId = (payload as Record<string, unknown>).documentId
+  if (typeof documentId !== 'string' || !documentId.trim() || !allowedRefs.documentIds.includes(documentId.trim())) {
+    return badRequest(requestId, 'documentId is not registered for this invite link.')
   }
 
   const packetId = crypto.randomUUID()
 
+  // Business, client and grant come from the registration, never from the body.
   await env.DB
     .prepare(`
       INSERT INTO portal_packet_inbox (id, business_id, client_id, access_grant_id, packet_type, payload_json)
       VALUES (?, ?, ?, ?, ?, ?)
     `)
-    .bind(packetId, grant.business_id, grant.client_id, grant.id, packetType.trim(), JSON.stringify(payload))
+    .bind(packetId, grant.business_id, grant.client_id, grant.id, documentSigningResponsePacketType, JSON.stringify(payload))
     .run()
 
   return jsonResponse(200, { ok: true, requestId, packetId, message: 'Submitted -- pending Business review.' }, requestId)
@@ -139,14 +200,12 @@ export async function handleSubmitPortalPacket(request: Request, env: Env, reque
 // published Estimate -- opening it fires a 'viewed' beacon, the Accept / Decline buttons fire
 // 'accepted' / 'declined'. Each becomes an 'estimate_event' packet in the Business's inbox, which
 // ClientPortalRuntimeService.pollEstimateClientEvents drains into an estimate status change +
-// notification. The estimateRef is validated against the currently-published snapshot's own
-// estimate.estimateRef -- a mismatched ref is rejected here, never forwarded to the Business.
-// (parseEstimateEventBody / estimateRefMatchesSnapshot are extracted into estimateEventValidation.ts
-// so they carry a dependency-free node --test surface.)
-
-export async function handleSubmitEstimateEvent(request: Request, env: Env, requestId: string, inviteToken: string): Promise<Response> {
-  const grant = await requireActiveGrant(env, inviteToken)
-  if (!grant) return notFoundResponse(requestId, 'This invite link is invalid, expired, or has been revoked.')
+// notification. The estimateRef must be one the Business registered for this token
+// (allowedRefs.estimateRefs) -- any other ref is rejected here, never forwarded to the Business.
+// (parseEstimateEventBody / estimateRefIsAllowed live in estimateEventValidation.ts so they carry a
+// dependency-free node --test surface.)
+async function submitEstimateEvent(request: Request, env: Env, requestId: string, registration: LiveRegistration): Promise<Response> {
+  const { grant, allowedRefs } = registration
 
   const contentType = request.headers.get('content-type') || ''
   if (!contentType.toLowerCase().includes('application/json')) {
@@ -164,16 +223,8 @@ export async function handleSubmitEstimateEvent(request: Request, env: Env, requ
   if (!parsed.ok) return badRequest(requestId, parsed.error)
   const { estimateRef, event } = parsed
 
-  const snapshot = await env.DB
-    .prepare(`SELECT payload_json, expires_at FROM portal_snapshots_current WHERE access_grant_id = ?`)
-    .bind(grant.id)
-    .first<{ payload_json: string; expires_at: string }>()
-  if (!snapshot || Date.parse(snapshot.expires_at) <= Date.now()) {
-    return notFoundResponse(requestId, 'Nothing is currently published to this invite link.')
-  }
-
-  if (!estimateRefMatchesSnapshot(snapshot.payload_json, estimateRef)) {
-    return badRequest(requestId, 'estimateRef does not match the estimate published to this invite link.')
+  if (!estimateRefIsAllowed(allowedRefs.estimateRefs, estimateRef)) {
+    return badRequest(requestId, 'estimateRef is not registered for this invite link.')
   }
 
   // For 'viewed', collapse repeat page loads: skip if an unacknowledged 'viewed' event for this
@@ -210,11 +261,10 @@ export async function handleSubmitEstimateEvent(request: Request, env: Env, requ
 // Notifications_..._7Phase_Plan Part D / D-4 (Orchestration BS-3): the Client opening a published
 // invoice deep-link fires a 'viewed' beacon, which becomes an 'invoice_event' packet the Business
 // polls (ClientPortalRuntimeService.pollInvoiceClientEvents) into an invoice status change +
-// notification. Thin glue over invoiceEventValidation.ts plus the same grant-lookup / D1-insert
-// pattern handleSubmitEstimateEvent uses.
-export async function handleSubmitInvoiceEvent(request: Request, env: Env, requestId: string, inviteToken: string): Promise<Response> {
-  const grant = await requireActiveGrant(env, inviteToken)
-  if (!grant) return notFoundResponse(requestId, 'This invite link is invalid, expired, or has been revoked.')
+// notification. Thin glue over invoiceEventValidation.ts plus the same registration / D1-insert
+// pattern submitEstimateEvent uses.
+async function submitInvoiceEvent(request: Request, env: Env, requestId: string, registration: LiveRegistration): Promise<Response> {
+  const { grant, allowedRefs } = registration
 
   const contentType = request.headers.get('content-type') || ''
   if (!contentType.toLowerCase().includes('application/json')) {
@@ -232,16 +282,8 @@ export async function handleSubmitInvoiceEvent(request: Request, env: Env, reque
   if (!parsed.ok) return badRequest(requestId, parsed.error)
   const { invoiceRef, event } = parsed
 
-  const snapshot = await env.DB
-    .prepare(`SELECT payload_json, expires_at FROM portal_snapshots_current WHERE access_grant_id = ?`)
-    .bind(grant.id)
-    .first<{ payload_json: string; expires_at: string }>()
-  if (!snapshot || Date.parse(snapshot.expires_at) <= Date.now()) {
-    return notFoundResponse(requestId, 'Nothing is currently published to this invite link.')
-  }
-
-  if (!invoiceRefMatchesSnapshot(snapshot.payload_json, invoiceRef)) {
-    return badRequest(requestId, 'invoiceRef does not match the invoice published to this invite link.')
+  if (!invoiceRefIsAllowed(allowedRefs.invoiceRefs, invoiceRef)) {
+    return badRequest(requestId, 'invoiceRef is not registered for this invite link.')
   }
 
   // Collapse repeat page loads: skip if an unacknowledged 'viewed' event for this invoice is queued.
@@ -271,9 +313,8 @@ export async function handleSubmitInvoiceEvent(request: Request, env: Env, reque
   return jsonResponse(200, { ok: true, requestId, packetId, event, message: 'Recorded.' }, requestId)
 }
 
-export async function handleUploadPortalPhoto(request: Request, env: Env, requestId: string, inviteToken: string): Promise<Response> {
-  const grant = await requireActiveGrant(env, inviteToken)
-  if (!grant) return notFoundResponse(requestId, 'This invite link is invalid, expired, or has been revoked.')
+async function uploadPortalPhoto(request: Request, env: Env, requestId: string, registration: LiveRegistration): Promise<Response> {
+  const { grant } = registration
 
   const contentType = (request.headers.get('x-solesystems-content-type') || request.headers.get('content-type') || 'application/octet-stream').trim()
   if (!contentType.startsWith('image/')) {

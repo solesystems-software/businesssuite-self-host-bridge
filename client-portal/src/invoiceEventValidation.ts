@@ -25,16 +25,9 @@ export function parseInvoiceEventBody(body: unknown): ParsedInvoiceEventBody {
   return { ok: true, invoiceRef, event: event as InvoiceEvent }
 }
 
-// The published snapshot's invoice ref must match the ref the Client claims -- a mismatched ref is
-// rejected here, never forwarded to the Business's inbox.
-export function invoiceRefMatchesSnapshot(snapshotPayloadJson: string, invoiceRef: string): boolean {
-  try {
-    const payload = JSON.parse(snapshotPayloadJson) as { invoice?: { invoiceRef?: unknown } | null }
-    const publishedRef = payload.invoice && typeof payload.invoice.invoiceRef === 'string'
-      ? payload.invoice.invoiceRef
-      : ''
-    return Boolean(publishedRef) && publishedRef === invoiceRef
-  } catch {
-    return false
-  }
+// The Worker holds no published content, so the Client's claimed ref is checked against the opaque ids the
+// Business registered for this token (allowedRefs.invoiceRefs) -- a ref that is not in the list is rejected
+// here, never forwarded to the Business's inbox.
+export function invoiceRefIsAllowed(allowedInvoiceRefs: readonly string[], invoiceRef: string): boolean {
+  return Boolean(invoiceRef) && allowedInvoiceRefs.includes(invoiceRef)
 }

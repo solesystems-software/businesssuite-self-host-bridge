@@ -2,7 +2,7 @@
 // Client-facing invoice-event beacon (POST /portal/{inviteToken}/invoice-event). Mirrors
 // test/estimate-events.test.ts.
 //
-//   1. Pure validation contract (parseInvoiceEventBody / invoiceRefMatchesSnapshot) -- always runs,
+//   1. Pure validation contract (parseInvoiceEventBody / invoiceRefIsAllowed) -- always runs,
 //      no credentials, no network. clientPortalRoutes.ts's handleSubmitInvoiceEvent is thin glue
 //      over these plus the same grant-lookup / D1-insert pattern the covered estimate route uses.
 //   2. Live route integration (gated on SOLESYSTEMS_CLIENT_PORTAL_* creds AND the route being
@@ -12,7 +12,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parseInvoiceEventBody, invoiceRefMatchesSnapshot, INVOICE_EVENTS } from '../src/invoiceEventValidation.ts'
+import { parseInvoiceEventBody, invoiceRefIsAllowed, INVOICE_EVENTS } from '../src/invoiceEventValidation.ts'
 
 test('parseInvoiceEventBody accepts a viewed event with a non-empty invoiceRef', () => {
   for (const event of INVOICE_EVENTS) {
@@ -50,19 +50,16 @@ test('parseInvoiceEventBody rejects non-object bodies', () => {
   assert.equal(parseInvoiceEventBody(['viewed']).ok, false)
 })
 
-test('invoiceRefMatchesSnapshot matches only the published invoice ref', () => {
-  const snapshot = JSON.stringify({ title: 'Job', invoice: { invoiceRef: 'inv-777', bodyHtml: '<div></div>' } })
-  assert.equal(invoiceRefMatchesSnapshot(snapshot, 'inv-777'), true)
-  assert.equal(invoiceRefMatchesSnapshot(snapshot, 'inv-778'), false)
+test('invoiceRefIsAllowed accepts only a registered invoice ref', () => {
+  const allowed = ['inv-777', 'inv-900']
+  assert.equal(invoiceRefIsAllowed(allowed, 'inv-777'), true)
+  assert.equal(invoiceRefIsAllowed(allowed, 'inv-900'), true)
+  assert.equal(invoiceRefIsAllowed(allowed, 'inv-778'), false)
 })
 
-test('invoiceRefMatchesSnapshot rejects a snapshot with no published invoice', () => {
-  assert.equal(invoiceRefMatchesSnapshot(JSON.stringify({ title: 'Job', invoice: null }), 'inv-1'), false)
-  assert.equal(invoiceRefMatchesSnapshot(JSON.stringify({ title: 'Job' }), 'inv-1'), false)
-})
-
-test('invoiceRefMatchesSnapshot tolerates a corrupt payload', () => {
-  assert.equal(invoiceRefMatchesSnapshot('{not json', 'inv-1'), false)
+test('invoiceRefIsAllowed rejects every ref when none is registered or the ref is empty', () => {
+  assert.equal(invoiceRefIsAllowed([], 'inv-1'), false)
+  assert.equal(invoiceRefIsAllowed(['inv-1'], ''), false)
 })
 
 // --- Layer 2: live route integration (skips until deployed + credentialed) ---
