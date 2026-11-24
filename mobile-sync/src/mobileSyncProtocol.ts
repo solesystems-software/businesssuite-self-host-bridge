@@ -4,6 +4,11 @@ const textEncoder = new TextEncoder()
 
 export const protocolVersion = 1 as const
 export const maximumJsonBodyBytes = 1024 * 1024
+// Budget for one /v1/packets/pending page. Each upload is capped at maximumJsonBodyBytes, so a
+// hundred of them concatenated is far past what the desktop will read back, and the desktop used
+// to fail the whole cycle with "Mobile Sync response is too large." Kept well under that cap so
+// the enclosing JSON and a final oversized envelope still fit.
+export const pendingPacketsPageBytes = 512 * 1024
 export const maximumMediaBodyBytes = 25 * 1024 * 1024
 export const maximumClockSkewSeconds = 5 * 60
 export const nonceRetentionSeconds = 10 * 60

@@ -476,4 +476,32 @@ assert(deviceListAfterRepair.body.devices.filter(row => row.device_id === mobile
   'Re-pairing replaces the row rather than duplicating it')
 pass('A removed device is re-pairable')
 
+// Production, 2026-11: /v1/packets/pending returned up to a hundred full envelopes at once. Each
+// upload may be just under the 1 MiB body limit, so the page could run far past what the desktop
+// will read back, and it failed the entire cycle with "Mobile Sync response is too large." --
+// stranding every packet behind the oversized page, with nothing draining. The page is now
+// budgeted by bytes: it serves what fits, in server_sequence order, and the rest stay pending.
+const bulkPayloadText = 'x'.repeat(120 * 1024)
+const bulkPackets = []
+for (let index = 0; index < 6; index += 1) {
+  const payload = { note: bulkPayloadText, record_id: 'record-1' }
+  const packet = { protocol_version: 1, packet_id: `packet-bulk-${index}-${runId}`, packet_type: 'note_capture',
+    account_sync_id: accountA, device_id: rePaired.mobile.identity, user_id: rePaired.mobile.user,
+    created_at: new Date().toISOString(), client_sequence: 100 + index, snapshot_version_seen: 1,
+    entity_id: 'record-1', entity_revision_seen: 'revision-1', idempotency_key: `idem-bulk-${index}-${runId}`,
+    payload, attachments: [], payload_hash: sha256(stable(payload)) }
+  await signed(rePaired.mobile, '/v1/packets', { method: 'POST', body: packet, expected: [201] })
+  bulkPackets.push(packet)
+}
+const bulkPending = await signed(desktopA, '/v1/packets/pending')
+const bulkServed = bulkPending.body.packets.filter(item => item.envelope.packet_id.startsWith('packet-bulk-'))
+assert(bulkServed.length > 0 && bulkServed.length < bulkPackets.length,
+  'Oversized pending queue is served as a bounded page rather than all at once')
+assert(Buffer.byteLength(JSON.stringify(bulkPending.body), 'utf8') < 1024 * 1024,
+  'A pending page stays under the desktop JSON response limit')
+const bulkSequences = bulkPending.body.packets.map(item => item.server_sequence)
+assert(bulkSequences.every((value, index) => index === 0 || value > bulkSequences[index - 1]),
+  'A pending page is ordered by server_sequence, so the remainder follows it')
+pass('Pending packets are paged by bytes')
+
 process.stdout.write('DEPLOYED MOBILE SYNC BRIDGE ACCEPTANCE PASS\n')
