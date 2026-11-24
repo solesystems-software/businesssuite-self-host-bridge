@@ -1,4 +1,4 @@
-import { isIdentifier, isSha256, maximumMediaBodyBytes, parsePacketEnvelope, sha256, sha256Bytes, stableStringify } from './mobileSyncProtocol'
+import { isIdentifier, isSha256, maximumMediaBodyBytes, parsePacketEnvelope, pendingPacketsPageBytes, sha256, sha256Bytes, stableStringify } from './mobileSyncProtocol'
 import { applyRateLimit, authenticateRequest, createCredentialSecret, encryptCredentialSecret, getOrCreateDesktopBootstrapSecretB64 } from './mobileSyncSecurity'
 import type { AuthenticatedRequest, Env, PacketEnvelopeV1 } from './mobileSyncTypes'
 
@@ -454,9 +454,20 @@ async function pendingPackets(auth: AuthenticatedRequest, env: Env) {
     FROM mobile_sync_packets WHERE account_sync_id = ? AND status = 'pending_desktop' ORDER BY server_sequence ASC LIMIT 100`)
     .bind(auth.accountSyncId).all<{ packet_id: string; server_sequence: number; payload_object_key: string; uploaded_at: string }>()
   const packets: Array<{ server_sequence: number; uploaded_at: string; envelope: PacketEnvelopeV1 }> = []
+  // Stop once this page is full rather than serving all hundred rows: the desktop refuses a
+  // response over its own JSON limit and fails the entire cycle, which strands every packet
+  // behind the oversized page. The packets left over stay pending_desktop and the next drain
+  // takes them, in server_sequence order. Always serve at least one, so a single envelope
+  // larger than the budget still moves instead of blocking the queue for good.
+  let pageBytes = 0
   for (const row of rows.results) {
     const envelope = await loadPacket(env, row.payload_object_key)
-    if (envelope) packets.push({ server_sequence: row.server_sequence, uploaded_at: row.uploaded_at, envelope })
+    if (!envelope) continue
+    const item = { server_sequence: row.server_sequence, uploaded_at: row.uploaded_at, envelope }
+    const itemBytes = JSON.stringify(item).length
+    if (packets.length && pageBytes + itemBytes > pendingPacketsPageBytes) break
+    packets.push(item)
+    pageBytes += itemBytes
   }
   return response({ ok: true, packets })
 }
